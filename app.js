@@ -16,6 +16,7 @@
   var STATUS_POLL_MS = 60000;         // 데몬 상태·재고 갱신 확인 주기
   var DAEMON_STALE_MS = 3 * 60000;    // 데몬 응답이 이보다 오래되면 경고
   var REQ_POLL_MS = 1500;             // 요청 처리 결과 확인 주기
+  var REQ_GIVEUP_MS = 10 * 60000;     // 이만큼 기다려도 데몬이 안 가져가면 요청 취소 (데몬도 10분 지난 요청은 버림)
   var APP_VER = ((document.currentScript && document.currentScript.src || "").match(/[?&]v=(\d+)/) || [])[1];
   var GROUPS ={ A: "상시재고", L: "로컬조달", O: "특수/단종계열", I: "비이동성", S: "특수발주" };
 
@@ -163,18 +164,34 @@
   }
 
   // ---------- 데몬 요청 ----------
+  // 데몬이 멈췄으면 요청을 쌓지 않음 (나중에 한꺼번에 처리되지 않게). 상태가 오래됐을 수 있어 한 번 다시 확인
+  async function daemonReady() {
+    if (!daemonStale()) return true;
+    await loadStatus();
+    return !daemonStale();
+  }
   async function sendRequest(kind, pn, params) {
+    if (!(await daemonReady())) throw new Error("DMS 연결 PC가 응답하지 않습니다");
     var r = await sb.from("inv_requests").insert({ kind: kind, item_cd: pn, params: params || {} }).select("id").single();
     if (r.error) throw r.error;
     return r.data.id;
   }
   function waitRequest(id, onDone) {
-    var tries = 0;
+    var since = Date.now();
     (function tick() {
-      sb.from("inv_requests").select("status,result,error").eq("id", id).single().then(function (r) {
-        tries++;
-        if (!r.error && (r.data.status === "done" || r.data.status === "failed")) { onDone(r.data); return; }
-        if (tries > 400) { onDone({ status: "failed", error: "응답이 없습니다 (데몬 확인 필요)" }); return; }
+      sb.from("inv_requests").select("status,result,error").eq("id", id).single().then(async function (r) {
+        var st = !r.error && r.data.status;
+        if (st === "done" || st === "failed") { onDone(r.data); return; }
+        if (st === "cancelled") { onDone({ status: "failed", error: r.data.error || "취소된 요청입니다" }); return; }
+        var waited = Date.now() - since;
+        // 오래 기다렸는데 아직 대기 중이면 취소 (데몬이 이미 가져가 처리 중이면 취소되지 않으니 결과를 더 기다림)
+        if (st === "pending" && waited > REQ_GIVEUP_MS) {
+          var c = await sb.rpc("inv_cancel_request", { p_id: id });
+          if (!c.error && c.data) { onDone({ status: "failed", error: "응답이 없어 취소했습니다 (DMS 연결 PC 확인 필요)" }); return; }
+        }
+        if (waited > 2 * REQ_GIVEUP_MS) {
+          onDone({ status: "failed", error: "처리 결과를 확인하지 못했습니다" }); return;
+        }
         setTimeout(tick, REQ_POLL_MS);
       });
     })();
@@ -606,7 +623,7 @@
     stopCamera();
     host.innerHTML = '<div class="scanner">' + vf +
       '<form class="search" id="manual" autocomplete="off">' + SEARCH + '<input id="manualInput" inputmode="text" autocapitalize="characters" placeholder="품번 또는 위치 직접 입력" aria-label="품번 또는 위치"><button type="submit">조회</button></form>' +
-      (daemonStale() ? '<div class="notice" style="margin:8px 0 0">DMS 연결 PC가 응답하지 않습니다. 재고는 ' + basis() + ' 기준이고, RDC 조회·위치 변경은 연결되면 처리됩니다.</div>' : '') +
+      (daemonStale() ? '<div class="notice" style="margin:8px 0 0">DMS 연결 PC가 응답하지 않습니다. 재고는 ' + basis() + ' 기준이고, 연결될 때까지 RDC 조회·위치 변경은 할 수 없습니다.</div>' : '') +
       '</div>';
     renderCamTools();
     setTimeout(syncCamera, 0);
@@ -1140,6 +1157,7 @@
         '<div class="row"><div class="row-main">현재 위치</div><span class="row-value mono-loc">' + esc(p.lct_cd || "없음") + '</span></div>' +
         '<div class="row"><div class="row-main">새 위치</div><input class="field" id="newLoc" style="text-align:right;width:55%;font-family:var(--mono)" placeholder="예: A140112" aria-label="새 위치" autocomplete="off" autocapitalize="characters"></div>' +
       '</div>' +
+      (daemonStale() ? '<div class="notice">DMS 연결 PC가 응답하지 않아 지금은 위치 변경을 저장할 수 없습니다.</div>' : '') +
       '<p class="footnote">새 위치 라벨을 스캔해도 됩니다. 저장하면 DMS에 변경을 요청하고, 보통 몇 초 안에 반영됩니다. DMS 데이터 갱신 중이면 몇 분 걸릴 수 있습니다.</p>' +
       '<button class="btn-primary" id="saveMove" data-pn="' + esc(pn) + '" disabled>저장</button>'
     );
@@ -1287,6 +1305,7 @@
         if (state.tab === "scan" && $("sheet").hidden) render(false); else renderMoveBar();
       });
     } catch (e) {
+      if ($("saveMove")) $("saveMove").disabled = false;
       toast("요청하지 못했습니다: " + e.message);
     }
   }

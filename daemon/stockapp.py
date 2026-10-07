@@ -28,6 +28,7 @@ LOC_HALT = HERE / "LOC_CHANGE_HALT.txt"   # 이 파일이 있으면 위치 변�
 POLL_EVERY_SEC = 3
 HEARTBEAT_EVERY_SEC = 60
 LOGIN_RETRY_SEC = 120
+REQ_EXPIRE_SEC = 600      # 이보다 오래 기다린 요청은 처리하지 않음 (앱도 10분 기다리다 취소)
 LOC_RE = re.compile(r"^(?:[A-Z]\d{6}|\d+F FLOOR)$")
 
 # 모듈을 reload 해도 유지할 상태 (로그인 토큰, 마지막 업로드 내용)
@@ -229,6 +230,10 @@ def poll(page) -> None:
         if t - _S.last_beat >= HEARTBEAT_EVERY_SEC:
             _rest("PATCH", f"inv_status?branch=eq.{_q(branch)}", {"daemon_seen_at": _now_iso()})
             _S.last_beat = t
+        # 데몬이 멈춘 동안 쌓인 요청은 버림 (늦게 실행된 위치 변경이 DMS를 바꾸지 않게)
+        cutoff = _q(datetime.fromtimestamp(t - REQ_EXPIRE_SEC, timezone.utc).isoformat())
+        _rest("PATCH", f"inv_requests?branch=eq.{_q(branch)}&status=eq.pending&requested_at=lt.{cutoff}",
+              {"status": "cancelled", "error": "오래된 요청이라 처리하지 않았습니다", "finished_at": _now_iso()})
         reqs = _rest("GET", f"inv_requests?branch=eq.{_q(branch)}&status=eq.pending&order=requested_at.asc&limit=1"
                             "&select=id,kind,item_cd,params,requested_by_name", prefer="")
         if reqs:
@@ -244,6 +249,7 @@ def _finish(req_id: int, status: str, result=None, error=None) -> None:
 
 def _handle(page, branch: str, req: dict) -> None:
     # 다른 처리기가 먼저 가져가지 않도록 pending → running 으로 바꾼 경우에만 처리
+    # 앱이 그 사이 취소했으면 status 가 바뀌어 있어 가져오지 않음
     taken = _rest("PATCH", f"inv_requests?id=eq.{req['id']}&status=eq.pending",
                   {"status": "running", "started_at": _now_iso()}, "return=representation")
     if not taken:
