@@ -400,6 +400,31 @@ function check(name, ok, extra) { results.push((ok ? 'PASS ' : 'FAIL ') + name +
   check('위치 화면에 BMW + RR 와 합계', lrow.includes('BMW 99 + RR 4') && lrow.includes('103EA'), lrow);
   if (process.env.SHOTS) await page.screenshot({ path: path.join(process.env.SHOTS, 'loc_rr.png') });
 
+  // ===== 수량 입력칸: 커서는 숫자 뒤 =====
+  await page.click('[data-check="PN10000"]');
+  await page.click('#countIn', { position: { x: 3, y: 10 } });   // 숫자 앞쪽을 눌러도
+  await page.waitForTimeout(100);
+  const caret = await page.$eval('#countIn', e => e.selectionStart + '/' + e.value.length);
+  check('수량 입력칸을 누르면 커서가 숫자 뒤', caret.split('/')[0] === caret.split('/')[1] && caret !== '0/0', caret);
+  await page.fill('#countIn', '');
+  await page.type('#countIn', '1a2');
+  check('수량 입력칸은 숫자만', (await page.inputValue('#countIn')) === '12');
+
+  // ===== 휴대폰 뒤로가기: 창 닫기 → 결과 닫기 → 종료 확인 =====
+  const back = async () => { await page.evaluate(() => history.back()); await page.waitForTimeout(200); };
+  await back();
+  check('뒤로가기 → 열린 창 닫힘', await page.isHidden('#sheet'));
+  await back();
+  check('뒤로가기 → 결과 닫힘', !(await page.$('#locList')));
+  await back();
+  const ex = await page.textContent('#sheet');
+  check('뒤로가기 → 종료 확인 창', await page.isVisible('#exitYes') && ex.includes('종료할까요'), ex);
+  await page.click('#exitNo');
+  check('계속 사용 → 창 닫고 앱 그대로', await page.isHidden('#sheet') && await page.isVisible('#tabbar'));
+  await back();
+  check('다시 뒤로가기 → 또 확인 창', await page.isVisible('#exitYes'));
+  await page.click('#exitNo');
+
   console.log(results.join('\n'));
   const errs = logs.filter(l => l.startsWith('PAGEERROR'));
   if (errs.length) console.log('--- 앱 스크립트 오류\n' + errs.join('\n'));
