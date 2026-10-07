@@ -230,6 +230,11 @@ button.row:active, .row-btn:active { background: var(--fill); }
 .idle svg { width: 48px; height: 48px; color: var(--label3); margin-bottom: 14px; }
 .idle-title { margin: 0; font-size: 17px; font-weight: 600; color: var(--label); }
 .idle-sub { margin: 4px 0 0; font-size: 15px; }
+.banner.info { background: var(--accent-soft); color: var(--accent); }
+.banner.ok { background: var(--fill); color: var(--ok); }
+.spin { width: 14px; height: 14px; border-radius: 50%; border: 2px solid currentColor; border-right-color: transparent; flex: none; }
+@media (prefers-reduced-motion: no-preference) { .spin { animation: spin .8s linear infinite; } }
+@keyframes spin { to { transform: rotate(360deg); } }
 </style>
 </head>
 <body>
@@ -300,6 +305,7 @@ button.row:active, .row-btn:active { background: var(--fill); }
     mode: "camera",
     sort: "pn",
     rdcLoaded: {},
+    moves: {},           // 위치 변경 요청 상태 (pending → done)
     checks: {
       "64119382885": { dms: 4, counted: 3, memo: "박스 1개 비어 있음", time: "14:12", by: "홍길동" }
     },
@@ -466,8 +472,14 @@ button.row:active, .row-btn:active { background: var(--fill); }
     return '<div class="tile-label">RDC 재고</div><div class="tile-num' + (p.rdc ? "" : " zero") + '">' + p.rdc.toLocaleString() + '<small>EA</small></div><div class="tile-foot">방금 조회</div>';
   }
 
-  function viewPart(pn) {
-    var p = PARTS[pn];
+  function moveBanner(pn) {
+    var m = state.moves[pn];
+    if (!m) return "";
+    if (m.status === "pending") return '<div class="banner info"><span class="spin" aria-hidden="true"></span>DMS 반영 중 · ' + esc(m.from) + ' → ' + esc(m.to) + '</div>';
+    return '<div class="banner ok">DMS 반영 완료 · ' + esc(m.from) + ' → ' + esc(m.to) + ' · ' + m.time + '</div>';
+  }
+
+  function viewPart(pn) {    var p = PARTS[pn];
     var c = state.checks[pn];
     return resultHead("부품", fmtPn(pn), true) +
       '<p class="meta" style="margin-bottom:12px">' + esc(p.name) + '</p>' +
@@ -475,6 +487,7 @@ button.row:active, .row-btn:active { background: var(--fill); }
         '<div class="tile"><div class="tile-label">지점 현재고</div><div class="tile-num' + (p.qty ? "" : " zero") + '">' + p.qty + '<small>EA</small></div><button class="tag loc" data-go="' + esc(p.loc) + '">위치 ' + esc(p.loc) + ' ›</button></div>' +
         '<div class="tile rdc" id="rdcTile">' + rdcTile(p) + '</div>' +
       '</div>' +
+      moveBanner(pn) +
       (c ? '<div class="banner">수량 다름 체크됨 · DMS ' + c.dms + ' / 실사 ' + c.counted + (c.memo ? ' · ' + esc(c.memo) : '') + '</div>' : '') +
       '<div class="section-label">부품 정보</div>' +
       '<div class="group">' +
@@ -485,7 +498,7 @@ button.row:active, .row-btn:active { background: var(--fill); }
       '</div>' +
       '<div class="section-label">작업</div>' +
       '<div class="group">' +
-        '<button class="row" data-move="' + pn + '"><div class="row-main row-link">위치 변경</div>' + CHEV + '</button>' +
+        (state.moves[pn] && state.moves[pn].status === "pending" ? '<div class="row"><div class="row-main" style="color:var(--label2)">위치 변경 · DMS 반영 중</div></div>' : '<button class="row" data-move="' + pn + '"><div class="row-main row-link">위치 변경</div>' + CHEV + '</button>') +
         '<button class="row" data-check="' + pn + '"><div class="row-main row-link">' + (c ? "체크 내용 수정" : "수량 다름 체크") + '</div>' + CHEV + '</button>' +
       '</div>';
   }
@@ -620,8 +633,8 @@ button.row:active, .row-btn:active { background: var(--fill); }
         '<div class="row"><div class="row-main">현재 위치</div><span class="row-value mono-loc">' + esc(p.loc) + '</span></div>' +
         '<div class="row"><div class="row-main">새 위치</div><input class="field" id="newLoc" style="text-align:right;width:55%;font-family:var(--mono)" placeholder="예: A140112" aria-label="새 위치" autocomplete="off"></div>' +
       '</div>' +
-      '<p class="footnote">새 위치 라벨을 스캔해도 됩니다. 저장하면 DMS 위치가 바로 바뀝니다.</p>' +
-      '<button class="btn-primary" id="saveMove" data-pn="' + pn + '" disabled>DMS에 저장</button>'
+      '<p class="footnote">새 위치 라벨을 스캔해도 됩니다. 저장하면 DMS에 변경을 요청하고, 보통 몇 초 안에 반영됩니다. DMS 데이터 갱신 중이면 몇 분 걸릴 수 있습니다.</p>' +
+      '<button class="btn-primary" id="saveMove" data-pn="' + pn + '" disabled>저장</button>'
     );
     setTimeout(function () { var el = $("newLoc"); if (el) el.focus(); }, 300);
   }
@@ -688,8 +701,15 @@ button.row:active, .row-btn:active { background: var(--fill); }
     if (el.id === "saveMove") {
       var pn2 = el.getAttribute("data-pn"), to = normCode($("newLoc").value);
       var from = PARTS[pn2].loc;
-      PARTS[pn2].loc = to;
-      closeSheet(); render(false); toast("위치를 " + from + "에서 " + to + "(으)로 바꿨습니다");
+      // 앱 → 요청 목록 → 이 PC의 데몬 → DMS 순서로 처리됨. 시안에서는 2.5초 뒤 반영 완료로 흉내만 냄
+      state.moves[pn2] = { from: from, to: to, status: "pending" };
+      closeSheet(); render(false); toast("DMS에 위치 변경을 요청했습니다");
+      setTimeout(function () {
+        PARTS[pn2].loc = to;
+        state.moves[pn2] = { from: from, to: to, status: "done", time: now() };
+        if (state.tab === "scan") render(false);
+        toast("DMS 반영 완료: " + from + " → " + to);
+      }, 2500);
       return;
     }
     if (el.id === "exportBtn") { toast("시안에서는 내보내기가 동작하지 않습니다"); return; }
