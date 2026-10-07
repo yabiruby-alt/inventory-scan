@@ -180,7 +180,7 @@ button.row:active, .row-btn:active { background: var(--fill); }
 .switch input:focus-visible + i { outline: 2px solid var(--accent); outline-offset: 2px; }
 
 /* 탭바 */
-.tabbar { flex: none; display: grid; grid-template-columns: repeat(4, 1fr); padding: 6px 0 calc(6px + env(safe-area-inset-bottom, 0px)); background: var(--bar); backdrop-filter: saturate(180%) blur(20px); -webkit-backdrop-filter: saturate(180%) blur(20px); border-top: 0.5px solid var(--sep); z-index: 5; }
+.tabbar { flex: none; display: grid; grid-template-columns: repeat(5, 1fr); padding: 6px 0 calc(6px + env(safe-area-inset-bottom, 0px)); background: var(--bar); backdrop-filter: saturate(180%) blur(20px); -webkit-backdrop-filter: saturate(180%) blur(20px); border-top: 0.5px solid var(--sep); z-index: 5; }
 .tab { display: flex; flex-direction: column; align-items: center; gap: 2px; font-size: 10.5px; font-weight: 500; color: var(--label3); position: relative; padding-top: 2px; }
 .tab svg { width: 26px; height: 26px; }
 .tab.on { color: var(--accent); }
@@ -235,6 +235,34 @@ button.row:active, .row-btn:active { background: var(--fill); }
 .spin { width: 14px; height: 14px; border-radius: 50%; border: 2px solid currentColor; border-right-color: transparent; flex: none; }
 @media (prefers-reduced-motion: no-preference) { .spin { animation: spin .8s linear infinite; } }
 @keyframes spin { to { transform: rotate(360deg); } }
+/* 재고조사 */
+.acards { display: flex; flex-direction: column; gap: 12px; }
+.acard { display: flex; flex-direction: column; gap: 10px; width: 100%; background: var(--surface); border-radius: var(--r); padding: 14px 16px; }
+.acard:active { background: var(--fill); }
+.acard-top { display: flex; align-items: center; gap: 10px; }
+.acard-title { font-size: 17px; font-weight: 600; }
+.acard-foot { font-size: 13px; color: var(--label2); font-variant-numeric: tabular-nums; }
+.pill { flex: none; display: inline-flex; align-items: center; height: 22px; padding-inline: 8px; border-radius: 11px; font-size: 12px; font-weight: 600; background: var(--fill); color: var(--label2); font-variant-numeric: tabular-nums; }
+.pill.ok { color: var(--ok); }
+.pill.run { background: var(--accent-soft); color: var(--accent); }
+.pill.warn { background: var(--warn-soft); color: var(--warn); }
+.warn-text { color: var(--warn); }
+.pbar { height: 6px; border-radius: 3px; background: var(--fill); overflow: hidden; }
+.pbar i { display: block; height: 100%; background: var(--accent); border-radius: 3px; }
+.aprog { display: flex; flex-direction: column; gap: 8px; margin-bottom: 4px; }
+.aprog-nums { font-size: 15px; color: var(--label2); font-variant-numeric: tabular-nums; }
+.aprog-nums b { font-size: 22px; color: var(--label); }
+.row.done .pn, .row.done .row-sub { color: var(--label3); }
+.row:disabled { cursor: default; }
+.locchip { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 12px; padding: 8px 8px 8px 14px; border-radius: 10px; background: var(--accent-soft); color: var(--accent); font-size: 14px; }
+.locchip button { width: 28px; height: 28px; display: grid; place-items: center; color: var(--accent); }
+.locchip svg { width: 11px; height: 11px; }
+.bigqty { display: flex; align-items: baseline; justify-content: center; gap: 6px; padding: 8px 0 4px; }
+.bigqty span { font-size: 14px; color: var(--label2); margin-right: 6px; }
+.bigqty b { font-size: 56px; line-height: 1; font-weight: 700; letter-spacing: -0.03em; font-variant-numeric: tabular-nums; }
+.bigqty small { font-size: 17px; color: var(--label2); }
+.btn-ghost { display: block; width: 100%; height: 50px; border-radius: 12px; background: var(--fill); color: var(--label); font-size: 17px; font-weight: 600; text-align: center; margin-top: 10px; }
+.tab { font-size: 10px; }
 </style>
 </head>
 <body>
@@ -245,6 +273,10 @@ button.row:active, .row-btn:active { background: var(--fill); }
     <button class="tab" data-tab="scan">
       <svg viewBox="0 0 26 26" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M3 8V5.5A2.5 2.5 0 0 1 5.5 3H8M18 3h2.5A2.5 2.5 0 0 1 23 5.5V8M23 18v2.5a2.5 2.5 0 0 1-2.5 2.5H18M8 23H5.5A2.5 2.5 0 0 1 3 20.5V18"/><path d="M8 8v10M11 8v10M14.5 8v10M18 8v10" stroke-width="1.5"/></svg>
       스캔
+    </button>
+    <button class="tab" data-tab="audit">
+      <svg viewBox="0 0 26 26" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="4.5" width="16" height="18" rx="2.5"/><path d="M9.5 4.5V3.5h7v1"/><path d="M9 11.5l1.8 1.8 3.4-3.4M9 17.5h8"/></svg>
+      재고조사
     </button>
     <button class="tab" data-tab="recent">
       <svg viewBox="0 0 26 26" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="13" cy="13" r="9.5"/><path d="M13 7.5V13l3.5 2.5"/></svg>
@@ -306,6 +338,9 @@ button.row:active, .row-btn:active { background: var(--fill); }
     sort: "pn",
     rdcLoaded: {},
     moves: {},           // 위치 변경 요청 상태 (pending → done)
+    auditOpen: null,     // 열려 있는 재고조사 목록 (daily / weekly)
+    auditFilter: "left",
+    auditLoc: null,      // 위치 바코드를 찍으면 그 위치만 보기
     checks: {
       "64119382885": { dms: 4, counted: 3, memo: "박스 1개 비어 있음", time: "14:12", by: "홍길동" }
     },
@@ -360,6 +395,11 @@ button.row:active, .row-btn:active { background: var(--fill); }
       lastScan = { code: code, at: t };
     }
     if (/^Z/.test(code)) { toast("Z로 시작하는 서비스 코드는 조회하지 않습니다"); return; }
+    if (state.tab === "audit" && state.auditOpen && AUDITS[state.auditOpen].started) {
+      auditScan(code);
+      if ($("manualInput")) $("manualInput").value = "";
+      return;
+    }
     var type = isLoc(code) ? "loc" : PARTS[code] ? "part" : null;
     if (!type) { toast("등록된 부품이나 위치가 아닙니다: " + code); return; }
     state.recent = [{ code: code, time: now() }].concat(state.recent.filter(function (r) { return r.code !== code; })).slice(0, 50);
@@ -509,6 +549,163 @@ button.row:active, .row-btn:active { background: var(--fill); }
     return scannerBlock() + '<div id="result">' + body + '</div>';
   }
 
+  // ---------- 재고조사 (일일·주간 목록) ----------
+  // 실제 앱: 데몬이 이미 만드는 두 목록(일일 = 오늘 입고 중 현재고 있음, 주간 = 지난주 월~토 출고 중 현재고 있음)을 받아
+  // '조사 시작'을 누른 순간의 목록으로 고정해 진행 상황을 함께 저장
+  function auditItem(p) { return { pn: p.pn, loc: p.loc, name: p.name, qty: p.qty, status: null, counted: null, by: "", time: "" }; }
+  function sortByLoc(list) { return list.sort(function (a, b) { return a.loc.localeCompare(b.loc) || a.pn.localeCompare(b.pn); }); }
+  var AUDITS = {
+    daily: { key: "daily", title: "일일 재고조사", period: "10월 7일 입고분", rule: "오늘 입고된 부품 중 현재고가 있는 부품", started: null, items: [] },
+    weekly: { key: "weekly", title: "주간 재고조사", period: "9/28(월) ~ 10/3(토) 출고분", rule: "지난주 월~토 출고된 부품 중 현재고가 있는 부품", started: "월 09:12", items: [] }
+  };
+  (function seedAudits() {
+    var all = Object.keys(PARTS).map(function (k) { return PARTS[k]; });
+    var hw = all.filter(function (p) { return p.loc === "B070112"; });
+    AUDITS.daily.items = sortByLoc(all.filter(function (p) { return p.loc === "A140112" || p.loc === "A070121" || p.pn === "51137404597"; })
+      .concat(hw.slice(0, 9)).map(auditItem));
+    var w = sortByLoc(all.filter(function (p) { return p.loc === "A070121" || p.pn === "11428575211" || p.pn === "12120039664"; })
+      .concat(hw.slice(20, 60)).map(auditItem));
+    w.forEach(function (it, i) {
+      if (i < 18) { it.status = "ok"; it.by = "김민준"; it.time = "09:" + String(14 + i).padStart(2, "0"); }
+    });
+    w[5].status = "diff"; w[5].counted = Math.max(0, w[5].qty - 2);
+    w[11].status = "diff"; w[11].counted = w[11].qty + 1;
+    AUDITS.weekly.items = w;
+  })();
+
+  function auditStats(a) {
+    var done = 0, diff = 0;
+    a.items.forEach(function (it) { if (it.status) done++; if (it.status === "diff") diff++; });
+    return { done: done, diff: diff, total: a.items.length, left: a.items.length - done };
+  }
+  function progressBar(s) {
+    var pct = s.total ? Math.round(100 * s.done / s.total) : 0;
+    return '<div class="pbar" role="progressbar" aria-valuenow="' + pct + '" aria-valuemin="0" aria-valuemax="100"><i style="width:' + pct + '%"></i></div>';
+  }
+
+  function viewAuditHome() {
+    var cards = ["daily", "weekly"].map(function (k) {
+      var a = AUDITS[k], s = auditStats(a);
+      var status = !a.started ? '<span class="pill">시작 전</span>'
+        : s.left === 0 ? '<span class="pill ok">완료</span>'
+        : '<span class="pill run">진행 중</span>';
+      var foot = !a.started ? s.total + '건 · 시작하면 목록이 고정됩니다'
+        : s.done + ' / ' + s.total + ' 확인' + (s.diff ? ' · <b class="warn-text">수량 다름 ' + s.diff + '</b>' : '') + ' · ' + a.started + ' 시작';
+      return '<button class="acard" data-audit="' + k + '">' +
+        '<div class="acard-top"><div class="row-main"><div class="acard-title">' + a.title + '</div><div class="row-sub">' + a.period + '</div></div>' + status + CHEV + '</div>' +
+        (a.started ? progressBar(s) : '') +
+        '<div class="acard-foot">' + foot + '</div></button>';
+    }).join("");
+    return '<h1 class="large">재고조사</h1><p class="meta">해운대 부품창고 · 위치 순서대로 확인</p>' +
+      '<div class="acards">' + cards + '</div>' +
+      '<p class="footnote">일일: ' + AUDITS.daily.rule + '<br>주간: ' + AUDITS.weekly.rule + '<br>수량은 그 부품의 현재고 전체입니다.</p>';
+  }
+
+  function auditRows(a) {
+    var list = a.items.filter(function (it) {
+      if (state.auditLoc && it.loc !== state.auditLoc) return false;
+      if (!a.started) return true;
+      if (state.auditFilter === "left") return !it.status;
+      if (state.auditFilter === "diff") return it.status === "diff";
+      return true;
+    });
+    if (!list.length) {
+      var msg = state.auditFilter === "left" ? (state.auditLoc ? "이 위치는 모두 확인했습니다" : "남은 부품이 없습니다") : state.auditFilter === "diff" ? "수량이 다른 부품이 없습니다" : "목록이 비어 있습니다";
+      return '<div class="empty">' + msg + '</div>';
+    }
+    var html = "", cur = null;
+    list.forEach(function (it) {
+      if (it.loc !== cur) {
+        if (cur !== null) html += '</div>';
+        cur = it.loc;
+        html += '<div class="section-label mono-loc">' + esc(cur) + '</div><div class="group">';
+      }
+      var mark = it.status === "ok" ? '<span class="pill ok">일치</span>'
+        : it.status === "diff" ? '<span class="pill warn">실사 ' + it.counted + '</span>' : '';
+      html += '<button class="row' + (it.status ? " done" : "") + '" data-aitem="' + it.pn + '"' + (a.started ? '' : ' disabled') + '>' +
+        '<div class="row-main"><div class="pn">' + esc(it.pn) + '</div><div class="row-sub">' + esc(it.name) + '</div></div>' +
+        '<div class="qty">' + it.qty + '<small>EA</small></div>' + mark + '</button>';
+    });
+    return html + '</div>';
+  }
+
+  function viewAuditList(a) {
+    var s = auditStats(a);
+    var head = '<button class="rback" id="auditBack">' + BACK + '재고조사</button>' +
+      '<div class="rhead"><div class="rmain"><h2 class="rtitle">' + a.title + '</h2></div></div>' +
+      '<p class="meta" style="margin-bottom:12px">' + a.period + (a.started ? ' · ' + a.started + ' 시작' : '') + '</p>';
+    if (!a.started) {
+      return head +
+        '<div class="summary"><div><b>' + s.total + '</b><span>조사할 부품</span></div><div><b>' + uniqueLocs(a) + '</b><span>위치</span></div></div>' +
+        '<button class="btn-primary" id="auditStart" style="margin-top:0">조사 시작</button>' +
+        '<p class="footnote">시작하면 지금 목록(' + s.total + '건)으로 고정됩니다.' + (a.key === "daily" ? ' 이후 입고되는 부품은 다음 조사에 들어갑니다.' : '') + '</p>' +
+        '<div class="section-label">조사할 부품 미리보기</div>' + auditRows(a);
+    }
+    return head +
+      '<div class="aprog"><div class="aprog-nums"><b>' + s.done + '</b> / ' + s.total + ' 확인' + (s.diff ? ' · <span class="warn-text">수량 다름 ' + s.diff + '</span>' : '') + '</div>' + progressBar(s) + '</div>' +
+      (s.left === 0 ? '<div class="banner ok">조사를 마쳤습니다 · 수량 다름 ' + s.diff + '건은 체크 기록에 있습니다</div>' : '') +
+      (state.auditLoc ? '<div class="locchip"><span>위치 <b class="mono-loc">' + esc(state.auditLoc) + '</b>만 보는 중</span><button id="auditLocClear" aria-label="위치 필터 해제">' + CLOSE + '</button></div>' : '') +
+      '<div class="seg" role="tablist">' +
+        '<button data-afilter="left" class="' + (state.auditFilter === "left" ? "on" : "") + '">남은 것 ' + s.left + '</button>' +
+        '<button data-afilter="diff" class="' + (state.auditFilter === "diff" ? "on" : "") + '">수량 다름 ' + s.diff + '</button>' +
+        '<button data-afilter="all" class="' + (state.auditFilter === "all" ? "on" : "") + '">전체 ' + s.total + '</button>' +
+      '</div>' +
+      auditRows(a) +
+      '<p class="footnote">위치 바코드를 찍으면 그 위치만 보이고, 부품 바코드를 찍으면 확인 창이 열립니다.</p>';
+  }
+  function uniqueLocs(a) { var m = {}; a.items.forEach(function (it) { m[it.loc] = 1; }); return Object.keys(m).length; }
+
+  function viewAudit() {
+    if (!state.auditOpen) return viewAuditHome();
+    var a = AUDITS[state.auditOpen];
+    return (a.started ? scannerBlock() : '') + '<div id="result">' + viewAuditList(a) + '</div>';
+  }
+
+  function findAuditItem(a, pn) { for (var i = 0; i < a.items.length; i++) { if (a.items[i].pn === pn) return a.items[i]; } return null; }
+
+  // 재고조사 화면에서 스캔한 경우
+  function auditScan(code) {
+    var a = AUDITS[state.auditOpen];
+    var it = findAuditItem(a, code);
+    if (it) { openAuditItem(code); return; }
+    var n = a.items.filter(function (x) { return x.loc === code; }).length;
+    if (n) {
+      state.auditLoc = code; state.auditFilter = "left";
+      render(false); scrollToResult();
+      toast("위치 " + code + " · 조사할 부품 " + n + "건");
+      return;
+    }
+    toast("이 조사 목록에 없는 바코드입니다: " + code);
+  }
+
+  function openAuditItem(pn) {
+    var a = AUDITS[state.auditOpen], it = findAuditItem(a, pn);
+    var prev = it.status === "ok" ? '<p class="sheet-sub">' + it.time + ' ' + esc(it.by) + ' · 일치로 확인함</p>'
+      : it.status === "diff" ? '<p class="sheet-sub warn-text">' + it.time + ' ' + esc(it.by) + ' · 실사 ' + it.counted + '개로 기록함</p>' : '';
+    openSheet(
+      '<div class="sheet-head"><button class="cancel" data-close>닫기</button><h2>재고 확인</h2><span></span></div>' +
+      '<p class="sheet-sub"><span class="pn">' + esc(pn) + '</span> · <span class="mono-loc">' + esc(it.loc) + '</span><br>' + esc(it.name) + '</p>' +
+      '<div class="bigqty"><span>DMS 현재고</span><b>' + it.qty + '</b><small>EA</small></div>' + prev +
+      '<button class="btn-primary" id="aOk" data-pn="' + pn + '">일치</button>' +
+      '<button class="btn-ghost" id="aDiffToggle">수량 다름</button>' +
+      '<div id="aDiffBox" hidden>' +
+        '<div class="group" style="margin-top:12px"><div class="row stepper"><div class="row-main">실사 수량</div><div class="stepper-ctl"><button type="button" data-astep="-1" aria-label="하나 빼기">−</button><input id="aCountIn" type="number" inputmode="numeric" min="0" value="' + (it.status === "diff" ? it.counted : it.qty) + '" aria-label="실사 수량"><button type="button" data-astep="1" aria-label="하나 더하기">+</button></div></div>' +
+        '<div class="row"><textarea class="field" id="aMemoIn" rows="2" placeholder="메모 (선택)" aria-label="메모"></textarea></div></div>' +
+        '<button class="btn-primary" id="aDiffSave" data-pn="' + pn + '">수량 다름으로 저장</button>' +
+      '</div>'
+    );
+  }
+
+  function markAudit(pn, status, counted, memo) {
+    var a = AUDITS[state.auditOpen], it = findAuditItem(a, pn);
+    it.status = status; it.counted = counted; it.by = "홍길동"; it.time = now();
+    if (status === "diff") state.checks[pn] = { dms: it.qty, counted: counted, memo: memo || (a.title + " 중 확인"), time: it.time, by: it.by };
+    else delete state.checks[pn];
+    closeSheet(); render(false);
+    var s = auditStats(a);
+    toast(status === "ok" ? "일치 · " + pn + " (" + s.done + "/" + s.total + ")" : "수량 다름 저장 · 체크 기록에 추가했습니다");
+  }
+
   // ---------- 다른 탭 ----------
   function viewLog() {
     var keys = Object.keys(state.checks);
@@ -558,13 +755,16 @@ button.row:active, .row-btn:active { background: var(--fill); }
     var html;
     if (state.tab === "log") html = viewLog();
     else if (state.tab === "recent") html = viewRecent();
+    else if (state.tab === "audit") html = viewAudit();
     else if (state.tab === "settings") html = viewSettings();
     else html = viewScan();
 
     if (state.tab === "scan") {
-      nav.innerHTML = '<span></span><span class="nav-title always">재고조사</span><span class="nav-meta">' + BASIS + ' 기준</span>';
+      nav.innerHTML = '<span></span><span class="nav-title always">스캔</span><span class="nav-meta">' + BASIS + ' 기준</span>';
+    } else if (state.tab === "audit" && state.auditOpen) {
+      nav.innerHTML = '<span></span><span class="nav-title always">' + AUDITS[state.auditOpen].title + '</span><span class="nav-meta">' + BASIS + ' 기준</span>';
     } else {
-      nav.innerHTML = '<span></span><span class="nav-title">' + ({ log: "체크 기록", recent: "최근 스캔", settings: "설정" }[state.tab]) + '</span><span></span>';
+      nav.innerHTML = '<span></span><span class="nav-title">' + ({ log: "체크 기록", recent: "최근 스캔", settings: "설정", audit: "재고조사" }[state.tab]) + '</span><span></span>';
     }
 
     var top = content.scrollTop;
@@ -653,10 +853,28 @@ button.row:active, .row-btn:active { background: var(--fill); }
     if (el.hasAttribute("data-tab")) {
       var t = el.getAttribute("data-tab");
       if (t === "scan" && state.tab === "scan") state.result = [];
+      if (t === "audit" && state.tab === "audit") { state.auditOpen = null; state.auditLoc = null; }
       state.tab = t;
       render(true); return;
     }
     if (el.hasAttribute("data-close")) { closeSheet(); return; }
+    if (el.hasAttribute("data-audit")) { state.auditOpen = el.getAttribute("data-audit"); state.auditLoc = null; state.auditFilter = "left"; render(true); return; }
+    if (el.id === "auditBack") { state.auditOpen = null; state.auditLoc = null; render(true); return; }
+    if (el.id === "auditStart") { AUDITS[state.auditOpen].started = now(); render(true); toast("조사를 시작했습니다 · 목록 " + AUDITS[state.auditOpen].items.length + "건 고정"); return; }
+    if (el.hasAttribute("data-afilter")) { state.auditFilter = el.getAttribute("data-afilter"); render(false); return; }
+    if (el.id === "auditLocClear") { state.auditLoc = null; render(false); return; }
+    if (el.hasAttribute("data-aitem")) { openAuditItem(el.getAttribute("data-aitem")); return; }
+    if (el.id === "aOk") { markAudit(el.getAttribute("data-pn"), "ok", null); return; }
+    if (el.id === "aDiffToggle") { $("aDiffBox").hidden = false; el.hidden = true; $("aOk").hidden = true; $("aCountIn").focus(); return; }
+    if (el.hasAttribute("data-astep")) { var ai = $("aCountIn"); ai.value = Math.max(0, (parseInt(ai.value, 10) || 0) + parseInt(el.getAttribute("data-astep"), 10)); return; }
+    if (el.id === "aDiffSave") {
+      var apn = el.getAttribute("data-pn"), av = parseInt($("aCountIn").value, 10);
+      var ait = findAuditItem(AUDITS[state.auditOpen], apn);
+      if (isNaN(av)) { toast("실사 수량을 입력하세요"); return; }
+      if (av === ait.qty) { markAudit(apn, "ok", null); return; }
+      markAudit(apn, "diff", av, $("aMemoIn").value.trim());
+      return;
+    }
     if (el.hasAttribute("data-mode")) { state.mode = el.getAttribute("data-mode"); render(false); return; }
     if (el.hasAttribute("data-scan")) { resolve(el.getAttribute("data-scan")); return; }
     if (el.hasAttribute("data-go")) {
