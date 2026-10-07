@@ -52,9 +52,12 @@ function check(name, ok, extra) { results.push((ok ? 'PASS ' : 'FAIL ') + name +
   ];
   let checks = [], nextCheckId = 1;
   let failAuditPatch = false;
-  let rrSeen = true, nextReqId = 100;
-  const newReqs = {};
-  const rrResult = pn => pn === 'PN10000' ? { found: true, crt_qty: 4, lct_cd: 'R010101', item_nm: 'RR부품' } : pn === 'QQ12345' ? { found: true, crt_qty: 7, lct_cd: 'R020202', item_nm: 'RR전용' } : { found: false, crt_qty: 0 };
+  let rrSeen = true, rrPartsAt = iso(now - 120000);
+  const reqPosts = [];
+  const rrParts = [
+    { item_cd: 'PN10000', item_nm: 'RR부품', lct_cd: 'R010101', crt_qty: 4 },
+    { item_cd: 'QQ12345', item_nm: 'RR전용', lct_cd: 'R020202', crt_qty: 7 },
+  ];
   const moveReqs = [
     { id: 3, item_cd: 'PN10002', params: { from: 'A140112', to: 'B000001' }, status: 'done', result: { from: 'A140112', to: 'B000001' }, error: null, requested_by_name: '김철수', requested_at: iso(now - 60000) },
     { id: 2, item_cd: 'PN10003', params: { from: 'A140112', to: 'C000001' }, status: 'failed', result: null, error: 'DMS 저장 실패', requested_by_name: '이영희', requested_at: iso(now - 120000) },
@@ -70,7 +73,7 @@ function check(name, ok, extra) { results.push((ok ? 'PASS ' : 'FAIL ') + name +
     if (m === 'OPTIONS') return route.fulfill({ status: 200, headers: { 'access-control-allow-origin': '*', 'access-control-allow-headers': '*', 'access-control-allow-methods': '*' } });
     if (u.pathname.startsWith('/auth/')) return json({});
     if (t === 'profiles') return json({ id: USER.id, login_id: 't', name: '시험', role: 'staff', branch: '해운대', active: true, must_change_password: false });
-    if (t === 'inv_status') return json({ branch: '해운대', parts_at: partsAt, daemon_seen_at: iso(Date.now() + 3600000), rr_seen_at: rrSeen ? iso(Date.now() + 3600000) : null });   // 페이지 시계를 앞으로 돌려도 '방금 응답'으로 보이게
+    if (t === 'inv_status') return json({ branch: '해운대', parts_at: partsAt, daemon_seen_at: iso(Date.now() + 3600000), rr_seen_at: rrSeen ? iso(Date.now() + 3600000) : null, rr_parts_at: rrPartsAt });   // 페이지 시계를 앞으로 돌려도 '방금 응답'으로 보이게
     if (t === 'inv_parts') {
       if (m === 'HEAD') return route.fulfill({ status: 200, headers: { 'content-range': '*/' + parts.length, 'access-control-allow-origin': '*', 'access-control-expose-headers': 'content-range' } });
       const gte = u.searchParams.get('updated_at');
@@ -88,17 +91,9 @@ function check(name, ok, extra) { results.push((ok ? 'PASS ' : 'FAIL ') + name +
         return json(it);   // .single() → object
       }
     }
-    if (t === 'inv_requests' && m === 'POST') {
-      const b = JSON.parse(req.postData()), id = nextReqId++;
-      // RR 데몬 흉내: 바로 처리
-      newReqs[id] = Object.assign({ id, status: 'done', error: null }, b, { result: rrResult(b.item_cd) });
-      return json({ id }, 201);
-    }
-    if (t === 'inv_requests' && m === 'GET') {
-      const idq = u.searchParams.get('id');
-      if (idq) return json(newReqs[Number(idq.replace('eq.', ''))]);
-      return json(moveReqs);
-    }
+    if (t === 'inv_requests' && m === 'POST') { reqPosts.push(JSON.parse(req.postData())); return json({ id: 999 }, 201); }
+    if (t === 'inv_requests' && m === 'GET') return json(moveReqs);
+    if (t === 'inv_rr_parts') return json(rrParts);
     if (t === 'inv_checks') {
       if (m === 'GET') {
         let rows = checks.filter(c => !c.cleared_at);
@@ -197,44 +192,41 @@ function check(name, ok, extra) { results.push((ok ? 'PASS ' : 'FAIL ') + name +
   check('일치로 바꾸면 체크 기록 지움', open2.length === 0, 'open=' + open2.length);
   check('지울 때 이름은 보내지 않음 (서버가 채움)', checks.every(c => !('cleared_by_name' in c)));
 
-  // ===== RR 재고 =====
+  // ===== RR 재고 (BMW 처럼 올라온 현재고를 바로 보여 줌, 조회 버튼 없음) =====
   await page.click('[data-tab="scan"]');
   await page.fill('#manualInput', 'PN10000');
   await page.press('#manualInput', 'Enter');
   await page.waitForSelector('#rrTile');
-  const rr0 = await page.textContent('#rrTile');
-  check('부품 화면에 RR 재고 칸 (조회 버튼)', rr0.includes('RR 재고') && rr0.includes('RR 조회'), rr0);
-  reqLog.length = 0;
-  await page.click('[data-rr="PN10000"]');
-  await page.clock.runFor(2000); await page.waitForTimeout(300);
-  const rrPost = reqLog.filter(x => x.startsWith('POST inv_requests'));
-  check('RR 조회 요청 1건', rrPost.length === 1, rrPost.join(' | '));
-  const rrReq = Object.values(newReqs).slice(-1)[0];
-  check('요청 종류 rr (RDC 아님)', rrReq && rrReq.kind === 'rr', JSON.stringify(rrReq && rrReq.kind));
   const rr1 = await page.textContent('#rrTile');
-  check('RR 재고 표시', rr1.includes('4') && rr1.includes('R010101'), rr1);
+  check('부품 화면에 RR 재고 바로 표시', rr1.includes('4') && rr1.includes('R010101') && rr1.includes('기준') && !(await page.$('#rrTile button')), rr1);
+  check('RR 재고 보려고 요청 보내지 않음', !reqPosts.length, JSON.stringify(reqPosts));
   if (process.env.SHOTS) await page.screenshot({ path: path.join(process.env.SHOTS, 'rr.png') });
-  rrSeen = false; delete newReqs[rrReq.id];
-  await page.clock.fastForward(61000); await page.waitForTimeout(300);   // 1분마다 상태 갱신 → RR 응답 없음
-  const rrStale = await page.textContent('#rrTile');
-  await page.click('#rrTile [data-rr]');
-  await page.clock.runFor(2000); await page.waitForTimeout(300);
-  const rr2 = await page.textContent('#rrTile');
-  check('RR 데몬 꺼져 있으면 요청 안 보냄', rr2.includes('RR DMS 연결 PC가 응답하지 않습니다') && !Object.keys(newReqs).length, rr2);
-  await page.click('[data-tab="settings"]');
-  const st = await page.textContent('#view');
-  check('설정에 RR 연결 상태', st.includes('RR DMS 연결 PC') && st.includes('BMW DMS 연결 PC'), '');
-  await page.click('[data-tab="scan"]');
+  await page.fill('#manualInput', 'PN10001');
+  await page.press('#manualInput', 'Enter');
+  await page.waitForTimeout(200);
+  const rr0 = await page.textContent('#rrTile');
+  check('RR 에 없는 품번은 0 · 없음', rr0.includes('0') && rr0.includes('RR 부품창고에 없음'), rr0);
+  // RR 데몬이 새로 올리면 반영
+  rrParts.push({ item_cd: 'PN10001', item_nm: 'RR부품1', lct_cd: 'R030303', crt_qty: 9 });
+  rrPartsAt = iso(Date.now());
+  await page.clock.fastForward(61000); await page.waitForTimeout(400);
+  const rr9 = await page.textContent('#rrTile');
+  check('RR 데몬이 새로 올리면 반영', rr9.includes('9') && rr9.includes('R030303'), rr9);
+  rrSeen = false;
+  await page.clock.fastForward(61000); await page.waitForTimeout(300);
+  const rrS = await page.textContent('#rrTile');
+  check('RR 데몬 꺼지면 표시', rrS.includes('RR 연결 PC 응답 없음'), rrS);
   rrSeen = true;
   await page.clock.fastForward(61000); await page.waitForTimeout(300);
   await page.fill('#manualInput', 'QQ12345');
   await page.press('#manualInput', 'Enter');
-  await page.waitForSelector('#unknownRr');
-  await page.click('#unknownRr');
-  await page.clock.runFor(2000); await page.waitForTimeout(300);
-  const ur = await page.textContent('#unknownRrResult');
-  check('목록에 없는 품번도 RR에서 조회', ur.includes('7') && ur.includes('R020202'), ur);
+  await page.waitForSelector('#unknownLookup');
+  const us = await page.textContent('#sheet');
+  check('BMW 목록에 없는 품번 창에 RR 재고 바로 표시', us.includes('RR 재고') && us.includes('7') && us.includes('R020202'), '');
   await page.click('[data-close]');
+  await page.click('[data-tab="settings"]');
+  const st = await page.textContent('#view');
+  check('설정에 RR 기준 시각·연결 상태', st.includes('RR 현재고 기준 시각') && st.includes('RR DMS 연결 PC') && st.includes('BMW DMS 연결 PC'), '');
 
   // ===== 데몬 멈춤 안내가 스캐너 영역에 갱신 =====
   await page.click('[data-tab="scan"]');

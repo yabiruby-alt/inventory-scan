@@ -12,10 +12,9 @@ DMS 세션은 데몬 것 하나만 쓴다 (같은 계정으로 세션을 두 개
 
 BMW DMS 데몬과 RR DMS 데몬이 따로 켜져 있음:
   "dms": "bmw" (기본)  현재고·재고조사 목록 업로드, RDC 조회, 현재고 조회, 위치 변경
-  "dms": "rr"          RR 조회만 (RR DMS 부품창고 재고). BMW 현재고·목록은 올리지 않음
+  "dms": "rr"          RR DMS 부품창고 현재고만 10분마다 inv_rr_parts 로 올림. BMW 현재고·목록은 올리지 않음
   두 데몬이 같은 폴더를 쓰면 RR 쪽은 환경 변수 STOCKAPP_CONFIG=config.rr.local.json 처럼 다른 설정 파일을 지정
 """
-import inspect
 import json
 import os
 import re
@@ -50,7 +49,10 @@ if _S is None:
     _S.last_beat = 0.0
     _S.parts_sent = {}       # item_cd -> 마지막으로 올린 행 (바뀐 것만 올리기)
     _S.lists_sent = {}       # kind -> 마지막으로 올린 목록
+    _S.rr_sent = {}          # RR 데몬: item_cd -> 마지막으로 올린 행
     sys.modules["_stockapp_state"] = _S
+if not hasattr(_S, "rr_sent"):   # 이 항목이 생기기 전부터 떠 있던 데몬
+    _S.rr_sent = {}
 
 
 def _log(msg: str) -> None:
@@ -170,40 +172,53 @@ def _list_items(rows: list) -> list:
     return out
 
 
+def _upload_parts(table: str, sent_attr: str, branch: str, pw_rows: list, now: str):
+    """부품창고 현재고: 바뀐 행만 올리고, 없어진 품번은 지움 (Z 코드 제외)"""
+    sent = getattr(_S, sent_attr)
+    rows = {}
+    for r in pw_rows:
+        cd = r.get("itemCd")
+        if cd and not cd.startswith("Z"):
+            rows[cd] = _part_row(branch, r)
+    if not sent:   # 데몬 시작 후 처음: 서버에 있는 것과 비교할 기준이 없으니 전부 올림
+        changed = list(rows.values())
+    else:
+        changed = [v for k, v in rows.items() if sent.get(k) != v]
+    for i in range(0, len(changed), 500):
+        chunk = [dict(v, updated_at=now) for v in changed[i:i + 500]]
+        _rest("POST", f"{table}?on_conflict=branch,item_cd", chunk, "resolution=merge-duplicates,return=minimal")
+    if not sent:
+        # 처음: 이번에 올리지 않은 품번(예전 주기의 잔여)은 지움
+        _rest("DELETE", f"{table}?branch=eq.{_q(branch)}&updated_at=lt.{_q(now)}")
+    else:
+        removed = [k for k in sent if k not in rows]
+        for i in range(0, len(removed), 100):
+            ids = ",".join(f'"{x}"' for x in removed[i:i + 100])
+            _rest("DELETE", f"{table}?branch=eq.{_q(branch)}&item_cd=in.({_q(ids)})")
+    setattr(_S, sent_attr, rows)
+    return rows, changed
+
+
 def on_cycle(page, ctx: dict) -> None:
     """ctx: pw_rows(부품창고 현재고 원본), stockcheck, stockcheck_week, today(YYYY-MM-DD)"""
     if not CONFIG.exists():
         _log(f"{CONFIG.name} 이 없어 건너뜀")
-        return
-    if _dms() != "bmw":   # RR 데몬은 BMW 현재고·조사 목록을 올리지 않음 (DB 권한으로도 막혀 있음)
         return
     if not _ensure_token():
         return
     branch = _cfg()["branch"]
     now = _now_iso()
 
-    # 1) 부품창고 현재고: 바뀐 행만 올리고, 없어진 품번은 지움 (Z 코드 제외)
-    rows = {}
-    for r in ctx["pw_rows"]:
-        cd = r.get("itemCd")
-        if cd and not cd.startswith("Z"):
-            rows[cd] = _part_row(branch, r)
-    if not _S.parts_sent:   # 데몬 시작 후 처음: 서버에 있는 것과 비교할 기준이 없으니 전부 올림
-        changed = list(rows.values())
-    else:
-        changed = [v for k, v in rows.items() if _S.parts_sent.get(k) != v]
-    for i in range(0, len(changed), 500):
-        chunk = [dict(v, updated_at=now) for v in changed[i:i + 500]]
-        _rest("POST", "inv_parts?on_conflict=branch,item_cd", chunk, "resolution=merge-duplicates,return=minimal")
-    removed = [k for k in _S.parts_sent if k not in rows] if _S.parts_sent else None
-    if removed is None:
-        # 처음: 이번에 올리지 않은 품번(예전 주기의 잔여)은 지움
-        _rest("DELETE", f"inv_parts?branch=eq.{_q(branch)}&updated_at=lt.{_q(now)}")
-    else:
-        for i in range(0, len(removed), 100):
-            ids = ",".join(f'"{x}"' for x in removed[i:i + 100])
-            _rest("DELETE", f"inv_parts?branch=eq.{_q(branch)}&item_cd=in.({_q(ids)})")
-    _S.parts_sent = rows
+    if _dms() == "rr":   # RR 데몬: RR 부품창고 현재고만 (BMW 현재고·조사 목록은 DB 권한으로도 막혀 있음)
+        rows, changed = _upload_parts("inv_rr_parts", "rr_sent", branch, ctx["pw_rows"], now)
+        _rest("POST", "inv_status?on_conflict=branch", {"branch": branch, "rr_parts_at": now, "rr_seen_at": now},
+              "resolution=merge-duplicates,return=minimal")
+        _S.last_beat = time.time()
+        _log(f"업로드: RR 현재고 {len(rows)}건 (변경 {len(changed)}건)")
+        return
+
+    # 1) 부품창고 현재고
+    rows, changed = _upload_parts("inv_parts", "parts_sent", branch, ctx["pw_rows"], now)
 
     # 2) 재고조사 원본 목록
     sc, sw = ctx["stockcheck"], ctx["stockcheck_week"]
@@ -273,11 +288,9 @@ def _handle(page, branch: str, req: dict) -> None:
     try:
         if not re.fullmatch(r"[A-Z0-9]{5,20}", pn) or pn.startswith("Z"):
             raise ValueError(f"품번 형식이 아닙니다: {pn}")
-        if (kind == "rr") != (_dms() == "rr"):
-            raise ValueError(f"이 데몬({_dms()})이 처리하는 요청이 아닙니다: {kind}")
-        if kind == "rr":
-            result = _lookup_rr(page, pn)
-        elif kind in ("rdc", "stock"):
+        if _dms() == "rr":
+            raise ValueError(f"RR 데몬은 요청을 처리하지 않습니다: {kind}")
+        if kind in ("rdc", "stock"):
             result = _lookup(page, branch, pn, update_part=(kind == "stock"))
         elif kind == "loc_change":
             result = _loc_change(page, branch, pn, req.get("params") or {}, req.get("requested_by_name"))
@@ -312,31 +325,6 @@ def _lookup(page, branch: str, pn: str, update_part: bool) -> dict:
               "resolution=merge-duplicates,return=minimal")
         _S.parts_sent[pn] = row
     return result
-
-
-def _lookup_rr(page, pn: str) -> dict:
-    """RR DMS 부품창고 재고 (RDC 조회 없이)"""
-    import __main__ as pb
-    # partsbay.py 에 부품창고만 조회하는 lookup_own_stock(page, pn) -> [행] 이 있으면 그걸 씀.
-    # 없으면 lookup_stock 결과에서 부품창고 쪽만 씀 (이 경우 partsbay 안에서 RDC 조회도 함께 돌아감)
-    if hasattr(pb, "lookup_own_stock"):
-        rows = pb.lookup_own_stock(page, pn) or []
-    else:
-        params = inspect.signature(pb.lookup_stock).parameters
-        raw = pb.lookup_stock(page, pn, rdc=False) if "rdc" in params else pb.lookup_stock(page, pn)
-        if raw.get("own_error"):
-            raise RuntimeError(f"RR DMS 조회 실패: {raw['own_error']}")
-        rows = raw.get("own") or []
-    own_rows = [r for r in rows if r.get("strgNm") == "부품창고" and r.get("itemCd") == pn]
-    own = own_rows[0] if own_rows else None
-    return {
-        "found": own is not None,
-        "crt_qty": _num(own.get("crtQty")) if own else 0,
-        "able_qty": _num(own.get("ableQty")) if own else 0,
-        "lct_cd": ((own.get("lctCd") or "").strip() if own else "") or None,
-        "item_nm": own.get("itemNm") if own else None,
-        "checked_at": _now_iso(),
-    }
 
 
 # ---- 위치 변경: 재고마스터 화면에서 사람이 하는 순서 그대로 (조회 → 줄 선택 → 로케이션코드만 수정 → 저장) ----
