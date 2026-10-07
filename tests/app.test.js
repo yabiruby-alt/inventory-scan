@@ -361,6 +361,40 @@ function check(name, ok, extra) { results.push((ok ? 'PASS ' : 'FAIL ') + name +
   await page.click('#movesBack');
   check('돌아가기 → 부품 화면', await page.isVisible('[data-movelog="PN10002"]'));
 
+  // ===== 재고조사·위치 화면에 RR 합계 (PN10000: BMW 1 + RR 4) =====
+  await page.click('[data-tab="audit"]');
+  await page.click('[data-audit="weekly"]');
+  await page.waitForSelector('[data-afilter="all"]');
+  await page.click('[data-afilter="all"]');   // 다시 연 조사는 '남은 것'으로 열림
+  await page.waitForSelector('[data-aitem="PN10000"]');
+  const arow = await page.textContent('[data-aitem="PN10000"]');
+  check('재고조사 목록에 BMW + RR 와 합계', arow.includes('BMW 1 + RR 4') && arow.includes('5EA'), arow);
+  await page.click('[data-aitem="PN10000"]');
+  const ash = await page.textContent('#sheet');
+  check('확인 창에 BMW + RR 합계', ash.includes('BMW + RR 합계') && ash.includes('BMW 1 + RR 4'), '');
+  await page.click('#aDiffToggle');
+  check('실사 수량 기본값 = 합계', (await page.inputValue('#aCountIn')) === '5');
+  await page.click('#aDiffSave');   // 합계와 같으면 일치
+  await page.waitForTimeout(300);
+  check('합계와 같으면 일치로 저장', auditItems[0].status === 'ok' && !checks.some(c => c.item_cd === 'PN10000' && !c.cleared_at), auditItems[0].status);
+  await page.click('[data-aitem="PN10000"]');
+  await page.click('#aDiffToggle');
+  await page.fill('#aCountIn', '3');
+  await page.click('#aDiffSave');
+  await page.waitForTimeout(300);
+  const ck = checks.find(c => c.item_cd === 'PN10000' && !c.cleared_at);
+  check('수량 다름 체크에 RR 수량도 저장', ck && ck.dms_qty === 1 && ck.rr_qty === 4 && ck.counted_qty === 3, JSON.stringify(ck));
+  await page.click('[data-tab="log"]');
+  const lg = await page.textContent('#view');
+  check('체크 기록: 합계 → 실사, 차이는 합계 기준', lg.includes('5 → 3') && lg.includes('−2') && lg.includes('BMW 1 + RR 4'), '');
+  await page.click('[data-tab="scan"]');
+  await page.fill('#manualInput', 'A140112');
+  await page.press('#manualInput', 'Enter');
+  await page.waitForSelector('#locList');
+  const lrow = await page.$eval('[data-go="PN10000"]', e => e.textContent);
+  check('위치 화면에 BMW + RR 와 합계', lrow.includes('BMW 99 + RR 4') && lrow.includes('103EA'), lrow);
+  if (process.env.SHOTS) await page.screenshot({ path: path.join(process.env.SHOTS, 'loc_rr.png') });
+
   console.log(results.join('\n'));
   const errs = logs.filter(l => l.startsWith('PAGEERROR'));
   if (errs.length) console.log('--- 앱 스크립트 오류\n' + errs.join('\n'));

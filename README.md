@@ -36,6 +36,8 @@
 - RR 지점 코드는 RR 현재고 화면 검색칸 값을 씀. 안 되면 `config.local.json` 에 `"rr": {"corp_cd", "biz_area_cd", "brch_cd"}`
 - RR 을 못 올리면(로그인 필요 등) 기존 RR 현재고는 그대로 두고, 이유를 `inv_status.rr_error` 에 남겨 앱 설정 화면에 표시
 - RR 이 실패해도 BMW 업로드에는 영향 없음
+- 같은 자리에 BMW·RR 부품이 함께 있어 센 수량은 합계 → 재고조사·위치 화면·수량 다름 체크는 **BMW + RR 합계**로 비교
+  (재고조사는 시작할 때 RR 수량도 `inv_audit_items.rr_qty` 로 고정, 체크 기록은 `inv_checks.rr_qty`)
 
 ## DMS 위치 변경
 재고마스터 화면에서 사람이 하는 순서 그대로 처리한다 (조회 → 줄 선택 → 로케이션코드만 수정 → 저장).

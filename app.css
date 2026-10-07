@@ -335,3 +335,4 @@ button.row:active, .row-btn:active { background: var(--fill); }
 .rv-state { margin: 8px 2px 0; font-size: 13px; color: var(--label2); }
 .rv-state.err { color: var(--danger); }
 .rv-chrome { display: flex; align-items: center; justify-content: center; margin-top: 8px; text-decoration: none; }
+.rr-split { color: var(--accent); font-variant-numeric: tabular-nums; }

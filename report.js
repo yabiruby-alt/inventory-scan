@@ -63,7 +63,8 @@
   /**
    * 보고서 내용을 블록 목록으로 만든다. 블록은 그대로 놓이고, 표({head, rows})는 줄 단위로 쪽을 나눈다.
    * d: {title, branch, period, started_at, started_by, finished_at, finished_by, printed_at,
-   *     total, ok, diff, left, diffItems[{lct_cd,item_cd,item_nm,qty,counted,by,memo}], leftItems[{lct_cd,item_cd,item_nm,qty}]}
+   *     total, ok, diff, left, diffItems[{lct_cd,item_cd,item_nm,qty,rr,counted,by,memo}], leftItems[{lct_cd,item_cd,item_nm,qty,rr}]}
+   *   qty = BMW(DMS) 수량, rr = RR 수량. 차이 = 실사 - (BMW + RR)
    */
   function blocks(d) {
     var out = [];
@@ -77,12 +78,12 @@
     out.push({ html: '<h2 class="rp-h">수량 다름 ' + d.diffItems.length + '건</h2>' });
     if (d.diffItems.length) {
       out.push({ table: {
-        head: '<colgroup><col style="width:19mm"><col style="width:27mm"><col><col style="width:13mm"><col style="width:13mm"><col style="width:12mm"><col style="width:16mm"><col style="width:28mm"></colgroup>' +
-          '<thead><tr><th>위치</th><th>품번</th><th>품명</th><th class="n">DMS</th><th class="n">실사</th><th class="n">차이</th><th>확인자</th><th>메모</th></tr></thead>',
+        head: '<colgroup><col style="width:18mm"><col style="width:25mm"><col><col style="width:11mm"><col style="width:10mm"><col style="width:11mm"><col style="width:11mm"><col style="width:15mm"><col style="width:24mm"></colgroup>' +
+          '<thead><tr><th>위치</th><th>품번</th><th>품명</th><th class="n">BMW</th><th class="n">RR</th><th class="n">실사</th><th class="n">차이</th><th>확인자</th><th>메모</th></tr></thead>',
         rows: d.diffItems.map(function (it) {
-          var df = Number(it.counted) - Number(it.qty);
+          var df = Number(it.counted) - Number(it.qty) - (Number(it.rr) || 0);   // 차이 = 실사 - (BMW + RR)
           return '<tr><td class="m">' + esc(it.lct_cd || "-") + '</td><td class="m">' + esc(it.item_cd) + '</td><td>' + esc(it.item_nm) + '</td>' +
-            '<td class="n">' + num(it.qty) + '</td><td class="n">' + num(it.counted) + '</td><td class="n ' + (df < 0 ? "neg" : "pos") + '">' + (df > 0 ? "+" : "") + num(df) + '</td>' +
+            '<td class="n">' + num(it.qty) + '</td><td class="n">' + num(it.rr || 0) + '</td><td class="n">' + num(it.counted) + '</td><td class="n ' + (df < 0 ? "neg" : "pos") + '">' + (df > 0 ? "+" : "") + num(df) + '</td>' +
             '<td>' + esc(it.by || "") + '</td><td>' + esc(it.memo || "") + '</td></tr>';
         })
       } });
@@ -91,10 +92,10 @@
     out.push({ html: '<h2 class="rp-h">미확인 ' + d.leftItems.length + '건</h2>' });
     if (d.leftItems.length) {
       out.push({ table: {
-        head: '<colgroup><col style="width:22mm"><col style="width:32mm"><col><col style="width:18mm"></colgroup>' +
-          '<thead><tr><th>위치</th><th>품번</th><th>품명</th><th class="n">DMS 수량</th></tr></thead>',
+        head: '<colgroup><col style="width:22mm"><col style="width:32mm"><col><col style="width:14mm"><col style="width:14mm"><col style="width:14mm"></colgroup>' +
+          '<thead><tr><th>위치</th><th>품번</th><th>품명</th><th class="n">BMW</th><th class="n">RR</th><th class="n">합계</th></tr></thead>',
         rows: d.leftItems.map(function (it) {
-          return '<tr><td class="m">' + esc(it.lct_cd || "-") + '</td><td class="m">' + esc(it.item_cd) + '</td><td>' + esc(it.item_nm) + '</td><td class="n">' + num(it.qty) + '</td></tr>';
+          return '<tr><td class="m">' + esc(it.lct_cd || "-") + '</td><td class="m">' + esc(it.item_cd) + '</td><td>' + esc(it.item_nm) + '</td><td class="n">' + num(it.qty) + '</td><td class="n">' + num(it.rr || 0) + '</td><td class="n">' + num(Number(it.qty) + (Number(it.rr) || 0)) + '</td></tr>';
         })
       } });
     } else out.push({ html: '<div class="rp-none">모두 확인했습니다</div>' });
