@@ -1,4 +1,4 @@
-/* 해운대 재고조사 — 휴대폰 바코드 재고조사 앱
+/* DS재고 관리 — 해운대 부품창고 휴대폰 바코드 재고 관리 앱
  *
  * 데이터 흐름
  *   파츠베이 데몬(이 PC) ──10분마다──▶ Supabase inv_parts / inv_audit_source / inv_status
@@ -1024,7 +1024,7 @@
 
   function viewLogin() {
     return '<form class="login" id="loginForm" autocomplete="on">' +
-      '<h1>해운대 재고조사</h1><p class="meta">태블릿 입출고 앱과 같은 아이디로 로그인하세요</p>' +
+      '<h1>DS재고 관리</h1><p class="meta">해운대 부품창고 · 태블릿 입출고 앱과 같은 아이디로 로그인하세요</p>' +
       '<div class="group">' +
         '<div class="row"><label for="loginId">아이디</label><input id="loginId" name="username" autocomplete="username" autocapitalize="none" spellcheck="false" required></div>' +
         '<div class="row"><label for="loginPw">비밀번호</label><input id="loginPw" name="password" type="password" autocomplete="current-password" required></div>' +

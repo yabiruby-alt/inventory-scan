@@ -1,6 +1,6 @@
 {
-  "name": "해운대 재고조사",
-  "short_name": "재고조사",
+  "name": "DS재고 관리",
+  "short_name": "DS재고 관리",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",
