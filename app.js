@@ -244,7 +244,9 @@
   // ---------- 카메라 ----------
   // 인식 엔진 순서: ① 휴대폰 내장 BarcodeDetector(안드로이드 크롬) ② zxing-cpp WebAssembly(아이폰 등) ③ ZXing JS
   // 1D 바코드는 가늘어서 영상을 줄이면 안 읽힘 → 원본 해상도에서 가운데 가로 띠를 잘라 해독, 가끔 전체 화면도 확인
-  var ONE_D = ["code_128", "code_39", "code_93", "codabar", "ean_13", "ean_8", "itf", "upc_a", "upc_e"];
+  // 라벨에 쓰는 형식만 받음. ITF·Codabar·EAN·UPC 를 같이 받으면 Code128 을 엉뚱한 숫자로 읽는 경우가 생김
+  var ONE_D = ["code_128", "code_39", "code_93"];
+  var VOTE_WINDOW_MS = 1500;   // 이 시간 안에 같은 값이 반복돼야 확정
   var POLYFILL_URL = "https://cdn.jsdelivr.net/npm/barcode-detector@3.2.2/ponyfill/+esm";
   var ZXING_URLS = ["https://cdn.jsdelivr.net/npm/@zxing/library@0.23.0/umd/index.min.js",
                     "https://cdn.jsdelivr.net/npm/@zxing/browser@0.2.1/umd/zxing-browser.min.js"];
@@ -259,7 +261,7 @@
     var fmts = ONE_D.filter(function (f) { return sup.indexOf(f) >= 0; });
     if (fmts.indexOf("code_128") < 0) return null;
     var d = new Ctor({ formats: fmts });
-    return function (src) { return d.detect(src).then(function (codes) { return codes.length ? codes[0].rawValue : null; }); };
+    return function (src) { return d.detect(src).then(function (codes) { return codes.length ? { text: codes[0].rawValue, format: codes[0].format } : null; }); };
   }
   function getDetector() {
     if (detectorPromise) return detectorPromise;
@@ -274,10 +276,11 @@
       } catch (e) { /* 다음 엔진 */ }
       for (var i = 0; i < ZXING_URLS.length; i++) await loadScript(ZXING_URLS[i]);
       var F = ZXing.BarcodeFormat, H = ZXing.DecodeHintType, hints = new Map();
-      hints.set(H.POSSIBLE_FORMATS, [F.CODE_128, F.CODE_39, F.CODE_93, F.CODABAR, F.EAN_13, F.EAN_8, F.ITF, F.UPC_A, F.UPC_E]);
+      hints.set(H.POSSIBLE_FORMATS, [F.CODE_128, F.CODE_39, F.CODE_93]);
       hints.set(H.TRY_HARDER, true);
       var reader = new ZXingBrowser.BrowserMultiFormatOneDReader(hints);
-      return { name: "zxing-js", detect: function (canvas) { try { return Promise.resolve(reader.decodeFromCanvas(canvas).getText()); } catch (e) { return Promise.resolve(null); } } };
+      var FMT = {}; FMT[F.CODE_128] = "code_128"; FMT[F.CODE_39] = "code_39"; FMT[F.CODE_93] = "code_93";
+      return { name: "zxing-js", detect: function (canvas) { try { var r = reader.decodeFromCanvas(canvas); return Promise.resolve({ text: r.getText(), format: FMT[r.getBarcodeFormat()] || "" }); } catch (e) { return Promise.resolve(null); } } };
     })();
     detectorPromise.catch(function () { detectorPromise = null; });
     return detectorPromise;
@@ -287,10 +290,31 @@
     var host = $("scannerHost");
     return state.user && state.mode === "camera" && store.get("camera", true) && host && !host.hidden && document.visibilityState === "visible";
   }
-  function onCameraRead(text) {
+  // 한 번 읽힌 값은 바로 쓰지 않고, 짧은 시간 안에 같은 값이 반복될 때만 확정 (흐리거나 기울어 생기는 오인식 방지)
+  // 목록에 있는 위치·품번은 2번, 목록에 없는 값은 3번 연속
+  var votes = {};
+  function caption(msg) {
     var cap = document.querySelector(".vf-caption");
-    if (cap) { cap.textContent = "인식: " + text; clearTimeout(cam.capTimer); cam.capTimer = setTimeout(function () { if (cap.isConnected) cap.textContent = "바코드를 가로로 맞추면 계속 읽습니다"; }, 2500); }
-    resolve(text, true);
+    if (!cap) return;
+    cap.textContent = msg;
+    clearTimeout(cam.capTimer);
+    cam.capTimer = setTimeout(function () { if (cap.isConnected) cap.textContent = "바코드를 가로로 맞추면 계속 읽습니다"; }, 2500);
+  }
+  function onCameraRead(hit) {
+    var code = normCode(hit.text), t = Date.now();
+    if (!code) return;
+    // 방금 확정한 바코드가 계속 화면에 있으면 무시 (화면에서 사라지고 3초 지나야 다시 읽음)
+    if (cam.accepted && cam.accepted.code === code && t - cam.accepted.seen < SCAN_COOLDOWN_MS) { cam.accepted.seen = t; return; }
+    Object.keys(votes).forEach(function (k) { if (t - votes[k].last > VOTE_WINDOW_MS) delete votes[k]; });
+    var v = votes[code] = votes[code] || { n: 0, last: 0 };
+    v.n++; v.last = t;
+    var known = isLoc(code) || !!state.parts[code] || (state.auditOpen && !!findAuditItem(code));
+    var need = known ? 2 : 3;
+    if (v.n < need) { caption("인식 중: " + code); return; }
+    votes = {};
+    cam.accepted = { code: code, seen: t };
+    caption("인식: " + code + (hit.format ? " (" + hit.format.replace("_", " ").toUpperCase() + ")" : ""));
+    resolve(code, true);
   }
   var cropCanvas = document.createElement("canvas");
   function grab(video, full) {
@@ -332,7 +356,7 @@
         cam.frame++;
         det.detect(grab(video, cam.frame % 4 === 0)).then(function (text) {
           busy = false;
-          if (text) onCameraRead(text);
+          if (text && text.text) onCameraRead(text);
         }, function () { busy = false; });
       }, 100);
     } catch (e) {
