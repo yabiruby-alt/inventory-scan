@@ -16,7 +16,8 @@
   var STATUS_POLL_MS = 60000;         // 데몬 상태·재고 갱신 확인 주기
   var DAEMON_STALE_MS = 3 * 60000;    // 데몬 응답이 이보다 오래되면 경고
   var REQ_POLL_MS = 1500;             // 요청 처리 결과 확인 주기
-  var GROUPS = { A: "상시재고", L: "로컬조달", O: "특수/단종계열", I: "비이동성", S: "특수발주" };
+  var APP_VER = ((document.currentScript && document.currentScript.src || "").match(/[?&]v=(\d+)/) || [])[1];
+  var GROUPS ={ A: "상시재고", L: "로컬조달", O: "특수/단종계열", I: "비이동성", S: "특수발주" };
 
   var sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY, {
     auth: { persistSession: true, autoRefreshToken: true, storageKey: "inventory-scan-auth" }
@@ -1354,7 +1355,22 @@
     render(true);
   }
 
+  // ---------- 새 버전 자동 적용 ----------
+  // 휴대폰 브라우저가 예전 index.html 을 붙잡고 있으면 고친 내용이 안 보이므로, 서버의 버전과 다르면 새로고침
+  function checkUpdate() {
+    if (!APP_VER || !$("sheet").hidden) return;
+    fetch("./", { cache: "reload" }).then(function (r) { return r.ok ? r.text() : ""; }).then(function (t) {
+      var m = t.match(/app\.js\?v=(\d+)/);
+      if (!m || m[1] === APP_VER) return;
+      var tries = 0; try { tries = Number(sessionStorage.getItem("inv.reload." + m[1]) || 0); sessionStorage.setItem("inv.reload." + m[1], tries + 1); } catch (e) { /* 그냥 진행 */ }
+      if (tries < 2) location.reload();
+    }).catch(function () { /* 오프라인 등은 무시 */ });
+  }
+  document.addEventListener("visibilitychange", function () { if (document.visibilityState === "visible") checkUpdate(); });
+  setInterval(checkUpdate, 5 * 60000);
+
   // ---------- 시작 ----------
+  checkUpdate();
   (async function boot() {
     var s = await sb.auth.getSession();
     if (s.data && s.data.session) await afterLogin(s.data.session.user);
