@@ -348,6 +348,7 @@ async ({pn, loc, dealer, brch}) => {
 """
 
 _VOLATILE = ("updt", "Updt", "regDt", "RegDt", "uid", "dirty")
+_SCREEN_CLEARS = ("preSplyCd", "sftyStockPrid")
 
 
 def _other_changes(a: dict, b: dict) -> dict:
@@ -403,6 +404,10 @@ def _loc_change(page, branch: str, pn: str, params: dict, who) -> dict:
     r1 = frame.evaluate(_SELECT_JS, pn)
     got = ((r1.get("item") or {}).get("lctCd") or "").strip()
     other = _other_changes(r0["item"], r1.get("item") or {})
+    # 재고마스터 화면 저장이 원래 비우는 값 (직원이 화면에서 직접 저장해도 같음, 사용자 승인 2026-10-07)
+    #   preSplyCd(이전보급코드): 공백 → 빈값 / sftyStockPrid(안전재고기간): 화면 저장 데이터에 없는 항목이라 빈값이 됨
+    allowed = {k: v for k, v in other.items() if k in _SCREEN_CLEARS and v[1] in (None, "")}
+    other = {k: v for k, v in other.items() if k not in allowed}
     if not r1.get("ok") or got != to or other:
         LOC_HALT.write_text(f"{_now_iso()} {pn} 저장 후 확인 이상: 위치={got} 다른 변경={other}\n", encoding="utf-8")
         raise RuntimeError(f"저장 후 확인 이상 (위치 {got}, 다른 변경 {list(other)}) — 위치 변경을 멈췄습니다")
@@ -410,5 +415,5 @@ def _loc_change(page, branch: str, pn: str, params: dict, who) -> dict:
     _rest("PATCH", f"inv_parts?branch=eq.{_q(branch)}&item_cd=eq.{_q(pn)}", {"lct_cd": to, "updated_at": _now_iso()})
     if pn in _S.parts_sent:
         _S.parts_sent[pn] = dict(_S.parts_sent[pn], lct_cd=to)
-    _log(f"위치 변경 {pn}: {cur or '공란'} → {to} ({who})")
+    _log(f"위치 변경 {pn}: {cur or '공란'} → {to} ({who})" + (f" / 화면 저장으로 비워진 값 {allowed}" if allowed else ""))
     return {"from": cur, "to": to}
