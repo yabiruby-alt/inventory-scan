@@ -89,6 +89,7 @@
   var CHEV = '<svg class="chev" viewBox="0 0 8 13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1.5 1.5l5 5-5 5"/></svg>';
   var BACK = '<svg viewBox="0 0 12 20" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M10 2L2 10l8 8"/></svg>';
   var CLOSE = '<svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M2 2l8 8M10 2l-8 8"/></svg>';
+  var REFRESH = '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M13.5 8a5.5 5.5 0 1 1-1.6-3.9"/><path d="M13.5 2.5v3h-3"/></svg>';
   var SEARCH = '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="7" cy="7" r="5"/><path d="M11 11l3.5 3.5"/></svg>';
 
   var toastTimer;
@@ -990,20 +991,27 @@
     var p = state.parts[it.item_cd];
     return { bmw: p ? Number(p.crt_qty) || 0 : 0, lct: p ? p.lct_cd : null };
   }
+  // 수량을 DMS 갱신했으면 그때부터, 아니면 조사 시작부터의 변화
+  function sinceLabel() { var a = currentAudit(); return a && a.qty_refreshed_at ? "수량 갱신 뒤" : "조사 시작 뒤"; }
   function movedSince(it) {
     var n = syncNow(it);
     return n ? n.bmw + (itemRrKnown(it) ? rrQty(it.item_cd) : 0) - itemTotal(it) : 0;
   }
   function movedNote(it) {
     var d = movedSince(it);
-    return d ? '<div class="row-sub warn-text">조사 시작 뒤 ' + (d > 0 ? '+' : '−') + qtyNum(Math.abs(d)) + ' (지금 ' + qtyNum(itemTotal(it) + d) + ')</div>' : '';
+    return d ? '<div class="row-sub warn-text">' + sinceLabel() + ' ' + (d > 0 ? '+' : '−') + qtyNum(Math.abs(d)) + ' (지금 ' + qtyNum(itemTotal(it) + d) + ')</div>' : '';
   }
 
   function viewAuditList() {
     var k = state.auditOpen, s = state.sources[k], a = currentAudit();
+    // 진행 중인 조사: 제목 옆 작은 버튼으로 남은 부품 수량을 데몬 마지막 주기 DMS 현재고로 갱신
+    var canRefresh = a && !a.finished_at && state.auditItems.some(function (it) { return !it.status; });
     var head = '<button class="rback" id="auditBack">' + BACK + '재고조사</button>' +
-      '<div class="rhead"><div class="rmain"><h2 class="rtitle">' + AUDIT_TITLE[k] + '</h2></div></div>' +
-      '<p class="meta" style="margin-bottom:12px">' + periodLabel(k, s) + (a ? ' · ' + hhmm(a.started_at) + ' 시작' : '') + '</p>';
+      '<div class="rhead"><div class="rmain rtitle-row"><h2 class="rtitle">' + AUDIT_TITLE[k] + '</h2>' +
+        (canRefresh ? '<button class="title-btn" id="auditRefresh" aria-label="남은 부품 수량을 최근 DMS 현재고로 갱신">' + REFRESH + 'DMS 갱신</button>' : '') +
+      '</div></div>' +
+      '<p class="meta" style="margin-bottom:12px">' + periodLabel(k, s) + (a ? ' · ' + hhmm(a.started_at) + ' 시작' : '') +
+        (a && a.qty_refreshed_at ? ' · 수량 ' + hhmm(a.qty_basis_at || a.qty_refreshed_at) + ' DMS 기준' : '') + '</p>';
     if (!a) {
       var items = (s ? s.items : []).map(function (x) { return { item_cd: x.item_cd, item_nm: x.item_nm, lct_cd: x.lct_cd, qty: x.qty }; });
       items.sort(function (x, y) { return (x.lct_cd || "~").localeCompare(y.lct_cd || "~") || x.item_cd.localeCompare(y.item_cd); });
@@ -1068,7 +1076,7 @@
       (itemRrKnown(it) ? '' : '<div class="notice">RR 재고가 아직 올라오지 않아 BMW 수량만 합계에 들어 있습니다. DMS 연결 PC(데몬)를 확인하세요.</div>') +
       '<div class="nowbox" id="aNow" data-pn="' + esc(pn) + '">' + (syncNow(it)
         ? auditNowHtml(it, syncNow(it).bmw, syncNow(it).lct, '최근 DMS', basis() + ' 기준')
-        : '<button class="btn-secondary" id="aNowBtn">현재 DMS 재고 조회</button><div class="nowbox-hint">조사 시작 뒤 출고·입고로 바뀌었는지 확인</div>') + '</div>' + prev +
+        : '<button class="btn-secondary" id="aNowBtn">현재 DMS 재고 조회</button><div class="nowbox-hint">' + sinceLabel() + ' 출고·입고로 바뀌었는지 확인</div>') + '</div>' + prev +
       '<button class="btn-primary" id="aOk" data-pn="' + esc(pn) + '">일치</button>' +
       '<button class="btn-ghost" id="aDiffToggle">수량 다름</button>' +
       '<div id="aDiffBox" hidden>' +
@@ -1104,8 +1112,8 @@
   }
   function auditNowHtml(it, bmwNow, lctNow, label, when) {
     var rrNow = itemRrKnown(it) ? rrQty(it.item_cd) : 0, totNow = bmwNow + rrNow, d = totNow - itemTotal(it);
-    var msg = !d ? '<div class="nowbox-msg ok">조사 시작 뒤 바뀌지 않았습니다</div>'
-      : '<div class="nowbox-msg warn">조사 시작 뒤 <b>' + qtyNum(Math.abs(d)) + '개 ' + (d < 0 ? '줄었습니다' : '늘었습니다') + '</b> (' + (d < 0 ? '출고' : '입고') + ' 등)</div>' +
+    var msg = !d ? '<div class="nowbox-msg ok">' + sinceLabel() + ' 바뀌지 않았습니다</div>'
+      : '<div class="nowbox-msg warn">' + sinceLabel() + ' <b>' + qtyNum(Math.abs(d)) + '개 ' + (d < 0 ? '줄었습니다' : '늘었습니다') + '</b> (' + (d < 0 ? '출고' : '입고') + ' 등)</div>' +
         '<button class="btn-inline" id="aUseNow" data-qty="' + qtyNum(totNow) + '" data-d="' + qtyNum(d) + '">지금 수량 ' + qtyNum(totNow) + '개로 실사 입력 ›</button>';
     return '<div class="nowbox-row"><span>' + label + '</span><b>' + qtyNum(totNow) + '</b><small>EA</small></div>' +
       '<div class="nowbox-sub">BMW ' + qtyNum(bmwNow) + ' · RR ' + qtyNum(rrNow) + (lctNow && lctNow !== it.lct_cd ? ' · 위치 ' + esc(lctNow) : '') + ' · ' + when + '</div>' + msg +
@@ -1235,6 +1243,23 @@
       '<button class="btn-primary" id="auditReopenOk">다시 시작</button>'
     );
   }
+  // 남은(확인 안 한) 부품만 최근 DMS 현재고(BMW·RR)로 수량을 바꿈. 확인한 부품은 그대로 (inv_refresh_audit)
+  async function refreshAudit(btn) {
+    var a = currentAudit();
+    if (!a || btn.classList.contains("busy")) return;
+    btn.classList.add("busy"); btn.disabled = true;
+    var r = await sb.rpc("inv_refresh_audit", { p_id: a.id });
+    if (r.error) { toast("갱신하지 못했습니다: " + r.error.message); btn.classList.remove("busy"); btn.disabled = false; return; }
+    try {
+      await loadAudits();
+      await loadAuditItems(a.id);
+      auditCounts[a.id] = auditStatsOf(state.auditItems);
+    } catch (e) { toast("목록을 다시 불러오지 못했습니다: " + e.message); }
+    render(false);
+    var na = currentAudit(), at = na && na.qty_basis_at ? hhmm(na.qty_basis_at) : basis();
+    toast(r.data ? "남은 부품 " + r.data + "건 수량을 " + at + " DMS 기준으로 바꿨습니다" : "남은 부품 수량이 " + at + " DMS와 같습니다");
+  }
+
   async function reopenAudit(btn) {
     btn.disabled = true;
     var r = await sb.rpc("inv_reopen_audit", { p_id: currentAudit().id });
@@ -1769,7 +1794,7 @@
       var dn = Number(el.getAttribute("data-d"));
       $("aDiffBox").hidden = false; $("aDiffToggle").hidden = true; $("aOk").hidden = true;
       $("aCountIn").value = el.getAttribute("data-qty");
-      if (!$("aMemoIn").value) $("aMemoIn").value = "조사 시작 뒤 " + (dn < 0 ? "출고 " : "입고 ") + qtyNum(Math.abs(dn)) + "개 (지금 DMS " + el.getAttribute("data-qty") + "개)";
+      if (!$("aMemoIn").value) $("aMemoIn").value = sinceLabel() + " " + (dn < 0 ? "출고 " : "입고 ") + qtyNum(Math.abs(dn)) + "개 (지금 DMS " + el.getAttribute("data-qty") + "개)";
       $("aDiffSave").scrollIntoView({ block: "nearest" });
       return;
     }
@@ -1786,6 +1811,7 @@
     if (el.id === "exportBtn") { exportChecks(); return; }
     if (el.id === "movesOpen") { openMoveLog("settings"); return; }
     if (el.id === "auditFinish") { openFinish(); return; }
+    if (el.id === "auditRefresh") { refreshAudit(el); return; }
     if (el.id === "auditFinishOk") { finishAudit(el); return; }
     if (el.id === "auditReport") { openReport(); return; }
     if (el.id === "auditReopen") { openReopen(); return; }

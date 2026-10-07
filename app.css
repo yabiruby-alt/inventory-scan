@@ -368,3 +368,10 @@ button.row:active, .row-btn:active { background: var(--fill); }
 .nowbox-msg.ok { color: var(--ok); }
 .nowbox-msg.warn { color: var(--warn); }
 .nowbox .rdc-err { margin: 0 0 6px; }
+/* 재고조사 제목 옆 작은 버튼 (DMS 갱신) — 제목 줄 높이 안에서 */
+.rtitle-row { display: flex; align-items: center; gap: 8px; flex-wrap: nowrap; }
+.rtitle-row .rtitle { min-width: 0; }
+.title-btn { flex: none; display: inline-flex; align-items: center; gap: 4px; height: 26px; padding: 0 10px; border-radius: 13px; background: var(--accent-soft); color: var(--accent); font-size: var(--fs-sm); font-weight: 600; white-space: nowrap; }
+.title-btn svg { width: 13px; height: 13px; }
+.title-btn:disabled { opacity: .6; }
+@media (prefers-reduced-motion: no-preference) { .title-btn.busy svg { animation: spin .8s linear infinite; } }
