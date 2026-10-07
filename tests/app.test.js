@@ -4,14 +4,16 @@
 //   npm i --no-save playwright && npx playwright install chromium
 //   npm pack @supabase/supabase-js@2.117.2 && tar xzf supabase-supabase-js-2.117.2.tgz -C tests/vendor
 //     → tests/vendor/package/dist/umd/supabase.js (index.html 의 CDN 버전과 같게)
+//   mkdir -p tests/vendor/jspdf && npm pack jspdf@4.2.1 && tar xzf jspdf-4.2.1.tgz -C tests/vendor/jspdf  (report.js 와 같은 버전)
 // 실행:  node tests/app.test.js
-//   환경 변수로 바꿀 수 있음: SUPABASE_JS (supabase.js 경로), CHROMIUM (브라우저 실행 파일), SHOTS (화면 캡처 저장 폴더)
+//   환경 변수로 바꿀 수 있음: SUPABASE_JS (supabase.js 경로), JSPDF_JS (jspdf.umd.min.js 경로), CHROMIUM (브라우저 실행 파일), SHOTS (화면 캡처 저장 폴더)
 const http = require('http'), fs = require('fs'), path = require('path');
 let chromium;
 try { ({ chromium } = require('playwright')); } catch (e) { ({ chromium } = require('/opt/node-tools/node_modules/playwright')); }
 
 const ROOT = path.join(__dirname, '..');
 const SBJS = process.env.SUPABASE_JS || path.join(__dirname, 'vendor/package/dist/umd/supabase.js');
+const JSPDF = process.env.JSPDF_JS || path.join(__dirname, 'vendor/jspdf/package/dist/jspdf.umd.min.js');
 const SB = 'https://qswzxudtzjuheugdnuoc.supabase.co';
 const USER = { id: '11111111-1111-1111-1111-111111111111' };
 const PORT = 8123;
@@ -28,7 +30,9 @@ function check(name, ok, extra) { results.push((ok ? 'PASS ' : 'FAIL ') + name +
 (async () => {
   if (!fs.existsSync(SBJS)) throw new Error('supabase.js 가 없습니다: ' + SBJS + ' (파일 위 준비 참고)');
   await new Promise(r => server.listen(PORT, r));
-  const browser = await chromium.launch(process.env.CHROMIUM ? { executablePath: process.env.CHROMIUM } : {});
+  // 언어 설정이 비어 있는 서버에서는 브라우저가 한글 파일 이름을 'download' 로 바꾸므로 UTF-8 로 띄움
+  const env = Object.assign({}, process.env, { LANG: process.env.LANG || 'C.UTF-8' });
+  const browser = await chromium.launch(Object.assign({ env }, process.env.CHROMIUM ? { executablePath: process.env.CHROMIUM } : {}));
   const ctx = await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 2 });
   const page = await ctx.newPage();
   const logs = [];
@@ -45,10 +49,11 @@ function check(name, ok, extra) { results.push((ok ? 'PASS ' : 'FAIL ') + name +
   for (let i = 0; i < 15; i++) parts.push({ item_cd: 'PN' + String(10000 + i), item_nm: '부품' + i, lct_cd: 'A140112', crt_qty: i + 1, alois_cd: 'A1', last_purc_dt: null, updated_at: iso(now - 600000) });
   parts.push({ item_cd: 'PN20000', item_nm: '다른', lct_cd: 'B000001', crt_qty: 2, alois_cd: null, last_purc_dt: null, updated_at: iso(now - 600000) });
   const src = { kind: 'weekly', period_start: '2026-09-28', period_end: '2026-10-03', items: [], updated_at: iso(now) };
-  const audit = { id: 'aaaaaaaa-0000-0000-0000-000000000001', kind: 'weekly', period_start: '2026-09-28', period_end: '2026-10-03', item_count: 2, started_by: USER.id, started_by_name: '시험', started_at: iso(now - 3600000) };
+  const audit = { id: 'aaaaaaaa-0000-0000-0000-000000000001', kind: 'weekly', period_start: '2026-09-28', period_end: '2026-10-03', item_count: 3, finished_at: null, started_by: USER.id, started_by_name: '시험', started_at: iso(now - 3600000) };
   const auditItems = [
     { audit_id: audit.id, item_cd: 'PN10000', item_nm: '부품0', lct_cd: 'A140112', qty: 1, status: null, counted: null, memo: null, checked_by_name: null, checked_at: null },
     { audit_id: audit.id, item_cd: 'PN10001', item_nm: '부품1', lct_cd: 'A140112', qty: 2, status: null, counted: null, memo: null, checked_by_name: null, checked_at: null },
+    { audit_id: audit.id, item_cd: 'PN10002', item_nm: '부품2', lct_cd: 'B000001', qty: 3, status: null, counted: null, memo: null, checked_by_name: null, checked_at: null },
   ];
   let checks = [], nextCheckId = 1;
   let failAuditPatch = false;
@@ -66,6 +71,7 @@ function check(name, ok, extra) { results.push((ok ? 'PASS ' : 'FAIL ') + name +
   const reqLog = [];
 
   await page.route('https://cdn.jsdelivr.net/npm/@supabase/**', r => r.fulfill({ path: SBJS, contentType: 'text/javascript' }));
+  await page.route('https://cdn.jsdelivr.net/npm/jspdf@*/**', r => r.fulfill({ path: JSPDF, contentType: 'text/javascript' }));
   await page.route(SB + '/**', async route => {
     const req = route.request(), u = new URL(req.url()), m = req.method(), t = u.pathname.replace('/rest/v1/', '');
     reqLog.push(m + ' ' + t + u.search);
@@ -82,6 +88,7 @@ function check(name, ok, extra) { results.push((ok ? 'PASS ' : 'FAIL ') + name +
     }
     if (t === 'inv_audit_source') return json([src]);
     if (t === 'inv_audits') return json([audit]);
+    if (t === 'rpc/inv_finish_audit') { Object.assign(audit, { finished_at: iso(Date.now()), finished_by_name: '시험' }); return json(null, 204); }
     if (t === 'inv_audit_items') {
       if (m === 'GET') return json(auditItems);
       if (m === 'PATCH') {
@@ -192,6 +199,48 @@ function check(name, ok, extra) { results.push((ok ? 'PASS ' : 'FAIL ') + name +
   check('일치로 바꾸면 체크 기록 지움', open2.length === 0, 'open=' + open2.length);
   check('지울 때 이름은 보내지 않음 (서버가 채움)', checks.every(c => !('cleared_by_name' in c)));
 
+  // ===== 재고조사 종료 → 보고서 → PDF =====
+  await mark('PN10001', true, 5);   // 수량 다름 1, 미확인 1 (PN10002), 일치 1
+  const finBtn = await page.$('#auditFinish');
+  check('진행 중 조사에 "조사 종료" 버튼', !!finBtn);
+  await page.click('#auditFinish');
+  const finSheet = await page.textContent('#sheet');
+  check('종료 확인 창에 요약·미확인 안내', finSheet.includes('미확인') && finSheet.includes('1건은 보고서에'), '');
+  await page.evaluate(() => {   // 공유 메뉴 흉내 (OneDrive 로 보내기)
+    window.__shared = null;
+    navigator.canShare = () => true;
+    navigator.share = async (d) => { window.__shared = { name: d.files[0].name, size: d.files[0].size, type: d.files[0].type }; };
+  });
+  await page.click('#auditFinishOk');
+  await page.waitForSelector('#reportView');
+  check('종료하면 서버에 종료 기록', !!audit.finished_at);
+  const rv = await page.textContent('#rvPages');
+  check('보고서에 요약·수량 다름·미확인', rv.includes('주간 재고조사 보고서') && rv.includes('PN10001') && rv.includes('+3') && rv.includes('PN10002') && rv.includes('미확인 1건'), '');
+  const nm = await page.inputValue('#rvName');
+  check('파일 이름', nm === '260928-1003 주간 재고조사 보고서', nm);
+  await page.waitForFunction(() => document.getElementById('rvState').textContent.includes('PDF 준비됨'), null, { timeout: 30000 }).catch(() => {});
+  const stt = await page.textContent('#rvState');
+  check('PDF 미리 만들어 둠', stt.includes('PDF 준비됨'), stt);
+  if (process.env.SHOTS) await page.screenshot({ path: path.join(process.env.SHOTS, 'report.png') });
+  await page.click('#rvShare');
+  await page.waitForTimeout(200);
+  const shared = await page.evaluate(() => window.__shared);
+  check('OneDrive 공유로 PDF 보냄', shared && shared.name === '260928-1003 주간 재고조사 보고서.pdf' && shared.type === 'application/pdf' && shared.size > 10000, JSON.stringify(shared));
+  await page.fill('#rvName', '내 보고서');
+  const [dl] = await Promise.all([page.waitForEvent('download'), page.click('#rvDownload')]);
+  const pdfPath = path.join(process.env.SHOTS || require('os').tmpdir(), 'report.pdf');
+  await dl.saveAs(pdfPath);
+  const pdfBuf = fs.readFileSync(pdfPath);
+  check('내려받은 파일이 PDF (이름 바꾸기 반영)', dl.suggestedFilename() === '내 보고서.pdf' && pdfBuf.slice(0, 5).toString() === '%PDF-', dl.suggestedFilename());
+  await page.click('#rvClose');
+  check('닫으면 미리보기 사라짐', !(await page.$('#reportView')));
+  const afterFin = await page.textContent('#view');
+  check('종료 후: 종료 표시·보고서 버튼, 종료 버튼 없음', afterFin.includes('종료 · 더 이상 고칠 수 없습니다') && !!(await page.$('#auditReport')) && !(await page.$('#auditFinish')), '');
+  check('종료 후: 항목 못 누름, 스캐너 숨김', await page.$eval('[data-aitem="PN10002"]', e => e.disabled) && await page.$eval('#scannerHost', e => e.hidden), '');
+  await page.click('#auditBack');
+  const card = await page.textContent('[data-audit="weekly"]');
+  check('조사 카드에 "종료"', card.includes('종료'), card);
+
   // ===== RR 재고 (BMW 처럼 올라온 현재고를 바로 보여 줌, 조회 버튼 없음) =====
   await page.click('[data-tab="scan"]');
   await page.fill('#manualInput', 'PN10000');
@@ -241,7 +290,8 @@ function check(name, ok, extra) { results.push((ok ? 'PASS ' : 'FAIL ') + name +
   const n2 = await page.textContent('#daemonNotice');
   check('데몬 멈추면 스캔 화면 안내가 바로 나타남', n1 === '' && n2.includes('응답하지 않습니다'), JSON.stringify([n1, n2.slice(0, 30)]));
 
-  check('체크 기록 0건이면 배지 숨김', !(await page.isVisible('#badge')));
+  const openChecks = checks.filter(c => !c.cleared_at).length;
+  check('체크 기록 배지: 0건이면 숨김, 있으면 건수', openChecks ? (await page.textContent('#badge')) === String(openChecks) && await page.isVisible('#badge') : !(await page.isVisible('#badge')), 'open=' + openChecks);
 
   // ===== 위치 변경 이력 화면 =====
   await page.click('[data-tab="settings"]');
