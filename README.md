@@ -1,14 +1,29 @@
 # 해운대 재고조사
 
-휴대폰으로 위치·부품 바코드를 스캔해 DMS 부품창고 현재고와 RDC 재고를 조회하는 앱.
+휴대폰으로 위치·부품 바코드를 스캔해 DMS 부품창고 현재고와 RDC 재고를 조회하고, 재고조사를 하는 앱.
 
-## 현재 상태
-기획 단계. `시안/prototype.html` 은 예시 데이터로 만든 화면 시안이다 (DMS·DB 연결 없음).
+- 앱: https://yabiruby-alt.github.io/inventory-scan/ (홈 화면에 추가해서 사용)
+- 화면 시안: `시안/prototype.html` (예시 데이터)
 
-## 구조 (예정)
-- 앱: 휴대폰 전용 웹앱(PWA), 카메라 + 블루투스 스캐너
-- 백엔드: Supabase `dongsung-parts-tablet` 프로젝트 공유 (태블릿 입출고 앱과 같은 계정)
-- 데이터: 파츠베이 데몬(`partsbay.py`)이 10분마다 현재고 업로드, RDC 재고·위치 변경은 요청 큐로 처리
+## 구조
+```
+파츠베이 데몬(이 PC, partsbay.py) ──10분마다──▶ Supabase inv_parts / inv_audit_source / inv_status
+휴대폰 앱 ──요청──▶ inv_requests ──3초마다──▶ 데몬이 DMS에서 처리 (RDC 조회, 현재고 조회, 위치 변경)
+휴대폰 앱 ──▶ inv_checks (수량 다름), inv_audits / inv_audit_items (재고조사)
+```
+- 로그인: 태블릿 입출고 앱과 같은 계정 (Supabase 프로젝트 `dongsung-parts-tablet` 공유, 테이블은 모두 `inv_` 로 시작)
+- 앱: 빌드 없는 `index.html` + `app.js` + `app.css`. 바코드는 ZXing, DB는 supabase-js (CDN)
+- 데몬 연동: `daemon/stockapp.py` — partsbay.py 가 매 주기 다시 읽으므로 고쳐도 데몬 재시작 불필요
+- DB 변경: `supabase/migrations/`
+
+## 데몬 설정
+`daemon/config.example.json` 을 `daemon/config.local.json` 으로 복사하고 데몬 전용 계정 비밀번호를 넣는다.
+`config.local.json` 은 깃허브에 올라가지 않는다.
+
+## DMS 위치 변경
+재고마스터 화면에서 사람이 하는 순서 그대로 처리한다 (조회 → 줄 선택 → 로케이션코드만 수정 → 저장).
+저장 전에 로케이션코드 말고 바뀌는 값이 없는지, 저장 후 다시 조회해 다른 항목이 바뀌지 않았는지 확인한다.
+이상이 감지되면 `daemon/LOC_CHANGE_HALT.txt` 가 생기고 위치 변경을 멈춘다. 원인을 확인한 뒤 이 파일을 지우면 다시 동작한다.
 
 ## 정해진 규칙
 - 위치: 영문 1 + 숫자 6 (`A140112`), 그리고 `4F FLOOR` 형태. 그 외 형식은 쓰지 않음
@@ -16,3 +31,4 @@
 - 품번·위치는 띄어쓰기 없이 라벨 그대로 표시
 - 같은 바코드는 3초 동안 다시 읽지 않음
 - 스캔 영역은 화면 위에 고정, 결과는 그 아래에 표시
+- 재고조사 목록은 조사 시작 시점에 고정, 수량이 맞으면 "일치" 한 번
