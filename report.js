@@ -213,14 +213,19 @@
     return new File([pdf.output("blob")], fileTitle + ".pdf", { type: "application/pdf" });
   }
 
-  /** 공유 메뉴로 보낸다 (안드로이드: OneDrive·메일·메신저 등). 버튼을 누른 그 순간에 불러야 열린다 */
+  /**
+   * 공유 메뉴로 보낸다 (안드로이드: OneDrive·메일·메신저 등). 버튼을 누른 그 순간에 불러야 열린다.
+   * 결과: {status: "shared" | "cancelled" | "blocked" | "unsupported", error: 브라우저가 준 오류 (원인 확인용)}
+   * 파일만 보낸다 (제목을 같이 넣으면 거절하는 브라우저가 있음)
+   */
   async function shareFile(file) {
-    if (!navigator.canShare || !navigator.canShare({ files: [file] })) return "unsupported";
+    if (!navigator.share || !navigator.canShare || !navigator.canShare({ files: [file] })) return { status: "unsupported", error: "" };
     try {
-      await navigator.share({ files: [file], title: file.name });
-      return "shared";
+      await navigator.share({ files: [file] });
+      return { status: "shared", error: "" };
     } catch (e) {
-      return e && e.name === "AbortError" ? "cancelled" : "blocked";   // blocked = 누른 지 오래돼 브라우저가 거절
+      var err = (e && e.name ? e.name : "Error") + (e && e.message ? ": " + e.message : "");
+      return { status: e && e.name === "AbortError" ? "cancelled" : "blocked", error: err };
     }
   }
 

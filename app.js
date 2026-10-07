@@ -1188,6 +1188,7 @@
       '<div class="rv-panel">' +
         '<div class="rv-name"><input id="rvName" value="' + esc(report.name) + '" aria-label="파일 이름" autocomplete="off"><span>.pdf</span></div>' +
         '<p class="rv-state" id="rvState">PDF 만드는 중…</p>' +
+        '<div id="rvRetry" hidden><p class="rv-state err" id="rvErr"></p><button class="btn-primary" id="rvShare2" style="margin-top:8px">📤 다시 보내기</button></div>' +
         '<button class="btn-primary" id="rvShare" style="margin-top:8px">OneDrive 에 PDF 저장</button>' +
         '<button class="btn-ghost" id="rvDownload">기기에 내려받기</button>' +
         '<p class="footnote">공유 메뉴에서 OneDrive 를 고른 뒤 저장할 폴더를 고르세요.</p>' +
@@ -1217,9 +1218,20 @@
   async function shareReport() {
     if (!report.file) { toast(report.error ? "PDF 를 만들지 못했습니다: " + report.error : "PDF 를 만드는 중입니다. 다 되면 한 번 더 눌러 주세요"); return; }
     var r = await AuditReport.shareFile(namedReport());
-    if (r === "shared") toast("보냈습니다");
-    else if (r === "unsupported") toast("이 기기는 공유 메뉴를 지원하지 않습니다 — '기기에 내려받기'를 쓰세요");
-    else if (r === "blocked") toast("공유 메뉴가 열리지 않았습니다 — 한 번 더 눌러 주세요");
+    if (r.status === "shared") { toast("보냈습니다"); shareRetry(false); }
+    else if (r.status === "unsupported") toast("이 브라우저는 파일 공유를 지원하지 않습니다 — '기기에 내려받기'를 쓰세요");
+    else if (r.status === "blocked") shareRetry(true, r.error);
+    // cancelled: 공유 메뉴를 닫음 — 그대로 두어 다시 고를 수 있게
+  }
+  // 공유가 거절되면 큰 "다시 보내기" 버튼을 보여 줌 (새로 누른 순간에는 대부분 열림). 오류는 원인 확인용으로 작게 표시
+  function shareRetry(on, err) {
+    if (!$("rvRetry")) return;
+    $("rvRetry").hidden = !on;
+    if (on) $("rvErr").textContent = "공유 메뉴가 열리지 않았습니다. 아래 버튼을 한 번 더 눌러 주세요." + (err ? " (" + err + " · " + browserName() + ")" : "");
+  }
+  function browserName() {
+    var u = navigator.userAgent;
+    return /SamsungBrowser/.test(u) ? "삼성 인터넷" : /KAKAOTALK/i.test(u) ? "카카오톡" : /NAVER/.test(u) ? "네이버" : /EdgA/.test(u) ? "엣지" : /Chrome/.test(u) ? "크롬" : /Safari/.test(u) ? "사파리" : "기타";
   }
 
   var auditChannel = null;
@@ -1590,7 +1602,7 @@
     if (el.id === "auditFinishOk") { finishAudit(el); return; }
     if (el.id === "auditReport") { openReport(); return; }
     if (el.id === "rvClose") { closeReport(); return; }
-    if (el.id === "rvShare") { shareReport(); return; }
+    if (el.id === "rvShare" || el.id === "rvShare2") { shareReport(); return; }
     if (el.id === "rvDownload") {
       if (!report.file) { toast(report.error ? "PDF 를 만들지 못했습니다" : "PDF 를 만드는 중입니다. 잠시 뒤 다시 눌러 주세요"); return; }
       AuditReport.downloadFile(namedReport()); toast("다운로드 폴더에 저장했습니다"); return;
