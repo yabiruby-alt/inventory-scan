@@ -88,6 +88,7 @@ function check(name, ok, extra) { results.push((ok ? 'PASS ' : 'FAIL ') + name +
     }
     if (t === 'inv_audit_source') return json([src]);
     if (t === 'inv_audits') return json([audit]);
+    if (t === 'rpc/inv_reopen_audit') { Object.assign(audit, { finished_at: null, finished_by_name: null, reopened_at: iso(Date.now()), reopened_by_name: '시험' }); return json(null, 204); }
     if (t === 'rpc/inv_finish_audit') { Object.assign(audit, { finished_at: iso(Date.now()), finished_by_name: '시험' }); return json(null, 204); }
     if (t === 'inv_audit_items') {
       if (m === 'GET') return json(auditItems);
@@ -264,6 +265,21 @@ function check(name, ok, extra) { results.push((ok ? 'PASS ' : 'FAIL ') + name +
   await page.click('#auditBack');
   const card = await page.textContent('[data-audit="weekly"]');
   check('조사 카드에 "종료"', card.includes('종료'), card);
+
+  // ===== 잘못 종료했을 때 다시 시작 =====
+  await page.click('[data-audit="weekly"]');
+  await page.waitForSelector('#auditReopen');
+  await page.click('#auditReopen');
+  const ro = await page.textContent('#sheet');
+  check('다시 시작 확인 창: 확인한 것 그대로, 남은 것부터', ro.includes('그대로 두고') && ro.includes('남은 1건'), '');
+  await page.click('#auditReopenOk');
+  await page.waitForTimeout(300);
+  check('다시 열면 서버 종료 표시 지움', !audit.finished_at && audit.reopened_by_name === '시험', JSON.stringify({ f: audit.finished_at, r: audit.reopened_by_name }));
+  const reo = await page.textContent('#view');
+  check('다시 열면 이어서 확인 가능 (종료 버튼·스캐너·남은 것)', !!(await page.$('#auditFinish')) && !(await page.$('#auditReport')) && !(await page.$eval('#scannerHost', e => e.hidden)) && reo.includes('남은 것 1') && !(await page.$eval('[data-aitem="PN10002"]', e => e.disabled)), '');
+  const kept = auditItems.filter(x => x.status).length;
+  check('확인한 내용은 그대로', kept === 2, 'kept=' + kept);
+  await page.click('#auditBack');
 
   // ===== RR 재고 (BMW 처럼 올라온 현재고를 바로 보여 줌, 조회 버튼 없음) =====
   await page.click('[data-tab="scan"]');

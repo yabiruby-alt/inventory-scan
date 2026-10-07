@@ -993,7 +993,8 @@
     return head +
       '<div class="aprog"><div class="aprog-nums"><b>' + st.done + '</b> / ' + st.total + ' 확인' + (st.diff ? ' · <span class="warn-text">수량 다름 ' + st.diff + '</span>' : '') + '</div>' + progressBar(st) + '</div>' +
       (done ? '<div class="banner ok">' + hhmm(a.finished_at) + ' ' + esc(a.finished_by_name || "") + ' 종료 · 더 이상 고칠 수 없습니다</div>' +
-          '<button class="btn-primary" id="auditReport" style="margin:0 0 12px">보고서 보기 · PDF 저장</button>'
+          '<button class="btn-primary" id="auditReport" style="margin:0 0 8px">보고서 보기 · PDF 저장</button>' +
+          '<button class="btn-ghost" id="auditReopen" style="margin:0 0 12px">다시 시작 (이어서 확인)</button>'
         : st.left === 0 ? '<div class="banner ok">모두 확인했습니다 · 수량 다름 ' + st.diff + '건은 체크 기록에 있습니다</div>' +
           '<button class="btn-primary" id="auditFinish" style="margin:0 0 12px">조사 종료 · 보고서 만들기</button>' : '') +
       (state.auditLoc ? '<div class="locchip"><span>위치 <b class="mono-loc">' + esc(state.auditLoc) + '</b>만 보는 중</span><button id="auditLocClear" aria-label="위치 필터 해제">' + CLOSE + '</button></div>' : '') +
@@ -1156,6 +1157,27 @@
     await loadAudits();
     closeSheet(); render(false);
     openReport();
+  }
+
+  // 잘못 종료했을 때: 종료 표시만 지우고 확인한 내용 그대로 이어서
+  function openReopen() {
+    var a = currentAudit(), st = auditStatsOf(state.auditItems);
+    openSheet(
+      '<div class="sheet-head"><button class="cancel" data-close>취소</button><h2>다시 시작</h2><span></span></div>' +
+      '<p class="sheet-sub">' + hhmm(a.finished_at) + ' ' + esc(a.finished_by_name || "") + '이(가) 종료한 조사를 다시 엽니다.</p>' +
+      '<div class="summary"><div><b>' + st.done + '</b><span>확인</span></div><div class="' + (st.left ? "w" : "") + '"><b>' + st.left + '</b><span>남은 것</span></div></div>' +
+      '<p class="footnote">지금까지 확인한 ' + st.done + '건은 그대로 두고, 남은 ' + st.left + '건부터 이어서 확인합니다. 다 마치면 다시 "조사 종료"를 눌러 보고서를 만드세요.</p>' +
+      '<button class="btn-primary" id="auditReopenOk">다시 시작</button>'
+    );
+  }
+  async function reopenAudit(btn) {
+    btn.disabled = true;
+    var r = await sb.rpc("inv_reopen_audit", { p_id: currentAudit().id });
+    if (r.error) { toast("다시 열지 못했습니다: " + r.error.message); btn.disabled = false; return; }
+    await loadAudits();
+    state.auditFilter = "left"; state.auditLoc = null;
+    closeSheet(); render(true);
+    toast("조사를 다시 열었습니다. 남은 것부터 이어서 확인하세요");
   }
 
   var REPORT_TITLE = { daily: "일일 재고조사 보고서", weekly: "주간 재고조사 보고서" };
@@ -1614,6 +1636,8 @@
     if (el.id === "auditFinish") { openFinish(); return; }
     if (el.id === "auditFinishOk") { finishAudit(el); return; }
     if (el.id === "auditReport") { openReport(); return; }
+    if (el.id === "auditReopen") { openReopen(); return; }
+    if (el.id === "auditReopenOk") { reopenAudit(el); return; }
     if (el.id === "rvClose") { closeReport(); return; }
     if (el.id === "rvShare" || el.id === "rvShare2") { shareReport(); return; }
     if (el.id === "rvDownload") {
