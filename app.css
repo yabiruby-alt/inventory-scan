@@ -286,3 +286,16 @@ button.row:active, .row-btn:active { background: var(--fill); }
 .focus-ring { position: absolute; z-index: 2; width: 64px; height: 64px; margin: -32px 0 0 -32px; border: 2px solid #FFD60A; border-radius: 8px; pointer-events: none; }
 @media (prefers-reduced-motion: no-preference) { .focus-ring { animation: focusring .9s ease-out forwards; } }
 @keyframes focusring { 0% { transform: scale(1.4); opacity: 0; } 25% { transform: scale(1); opacity: 1; } 100% { opacity: 0; } }
+
+/* 카메라 v2 (태블릿 앱 방식): 화면 약 35% 높이, 안내 칸은 카메라 그림 좌표에 맞춰 배치 */
+.viewfinder.cam { height: clamp(220px, 35vh, 340px); }
+.viewfinder.cam .vf-frame { position: absolute; z-index: 1; }
+.viewfinder.cam .vf-frame span { width: 18px; height: 18px; }
+#camFreeze { position: absolute; inset: 0; width: 100%; height: 100%; z-index: 2; }
+.viewfinder.cam .vf-caption { z-index: 3; left: 12px; right: 12px; bottom: 10px; padding: 6px 10px; border-radius: 10px; background: rgba(0,0,0,.5); color: rgba(255,255,255,.92); }
+.viewfinder.cam .vf-caption.ok { background: rgba(48,209,88,.92); color: #04210D; font-weight: 600; }
+.viewfinder.cam .vf-mode, .viewfinder.cam .vf-tools { z-index: 3; }
+.vf-zooms { display: flex; gap: 2px; background: rgba(0,0,0,.4); border-radius: 10px; padding: 2px; }
+.vf-tool.on { background: #fff; color: #000; }
+.vf-tool.on.torch { background: #FFD60A; }
+.vf-flash { z-index: 4; }

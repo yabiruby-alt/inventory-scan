@@ -191,10 +191,10 @@
 
   // ---------- 스캔 처리 (카메라·블루투스·직접 입력 공통) ----------
   var lastScan = { code: "", at: 0 };
-  function resolve(raw, fromScanner) {
+  function resolve(raw, fromScanner, fromCamera) {
     var code = normCode(raw);
     if (!code) return;
-    if (fromScanner) {
+    if (fromScanner && !fromCamera) {
       var t = Date.now();
       if (code === lastScan.code && t - lastScan.at < SCAN_COOLDOWN_MS) return;
       lastScan = { code: code, at: t };
@@ -242,155 +242,194 @@
   });
 
   // ---------- 카메라 ----------
-  // 인식 엔진 순서: ① 휴대폰 내장 BarcodeDetector(안드로이드 크롬) ② zxing-cpp WebAssembly(아이폰 등) ③ ZXing JS
-  // 1D 바코드는 가늘어서 영상을 줄이면 안 읽힘 → 원본 해상도에서 가운데 가로 띠를 잘라 해독, 가끔 전체 화면도 확인
-  // 라벨에 쓰는 형식만 받음. ITF·Codabar·EAN·UPC 를 같이 받으면 Code128 을 엉뚱한 숫자로 읽는 경우가 생김
-  var ONE_D = ["code_128", "code_39", "code_93"];
-  var VOTE_WINDOW_MS = 1500;   // 이 시간 안에 같은 값이 반복돼야 확정
+  // 태블릿 입출고 앱(dsm-tablet-app CameraScan)과 같은 방식:
+  // - 고해상도(2560×1440)로 받고, 확대는 카메라(렌즈) 줌만 쓴다 (화면 확대는 화질이 떨어져 쓰지 않음)
+  // - 안내 칸 둘레만 잘라 찾고, 바코드 네 모서리가 모두 칸 안 + 크기가 칸에 맞고 + 두 장면 연속 거의 안 움직일 때만 확정
+  //   (칸에 걸쳐 있거나 옮기는 도중에 읽혀 엉뚱한 값이 나오던 문제 방지)
+  // - 확정하면 그 장면을 0.7초 멈춰 읽은 바코드를 초록으로 표시
+  // - 같은 바코드는 칸에서 0.6초 이상 벗어났다가 다시 들어오고, 처리 3초 뒤부터 다시 읽음
+  // 인식 엔진: ① 휴대폰 내장 BarcodeDetector(안드로이드 크롬) ② zxing-cpp WebAssembly(아이폰 등)
+  // BMW 부품 라벨은 Code 39 (태블릿 앱 확인). 위치 라벨 등을 위해 Code 128 도 받는다.
+  var ONE_D = ["code_39", "code_128", "code_93"];
   var POLYFILL_URL = "https://cdn.jsdelivr.net/npm/barcode-detector@3.2.2/ponyfill/+esm";
-  var ZXING_URLS = ["https://cdn.jsdelivr.net/npm/@zxing/library@0.23.0/umd/index.min.js",
-                    "https://cdn.jsdelivr.net/npm/@zxing/browser@0.2.1/umd/zxing-browser.min.js"];
-  var cam = { stream: null, timer: null, starting: false, error: null, torchOk: false, torchOn: false, engine: "", frame: 0,
-              caps: {}, zoom: store.get("zoom", 2), hwZoom: false, digitalZoom: 1 };
-  var ZOOMS = [1, 2, 3];
+  var SCAN_MAX_W = 1600;     // 잘라 낸 그림이 이보다 넓으면 줄여서 찾음 (속도)
+  var FREEZE_MS = 700;
+  var ZOOMS = [1, 1.5, 2];
+  var cam = { stream: null, timer: null, starting: false, error: null, torchOk: false, torchOn: false, engine: "",
+              caps: {}, zooms: [], zoom: 1, steady: null, frozenUntil: 0 };
   var detectorPromise = null;
 
-  function loadScript(src) {
-    return new Promise(function (res, rej) { var s = document.createElement("script"); s.src = src; s.onload = res; s.onerror = rej; document.head.appendChild(s); });
-  }
-  async function nativeDetector(Ctor) {
+  async function makeDetector(Ctor) {
     var sup = await Ctor.getSupportedFormats();
     var fmts = ONE_D.filter(function (f) { return sup.indexOf(f) >= 0; });
-    if (fmts.indexOf("code_128") < 0) return null;
-    var d = new Ctor({ formats: fmts });
-    return function (src) { return d.detect(src).then(function (codes) { return codes.length ? { text: codes[0].rawValue, format: codes[0].format } : null; }); };
+    if (!fmts.length) return null;
+    return new Ctor({ formats: fmts });
   }
   function getDetector() {
     if (detectorPromise) return detectorPromise;
     detectorPromise = (async function () {
       if ("BarcodeDetector" in window) {
-        try { var n = await nativeDetector(window.BarcodeDetector); if (n) return { name: "내장", detect: n }; } catch (e) { /* 다음 엔진 */ }
+        try { var n = await makeDetector(window.BarcodeDetector); if (n) return { name: "내장", det: n }; } catch (e) { /* 다음 엔진 */ }
       }
-      try {
-        var mod = await import(POLYFILL_URL);
-        var w = await nativeDetector(mod.BarcodeDetector);
-        if (w) return { name: "zxing-cpp", detect: w };
-      } catch (e) { /* 다음 엔진 */ }
-      for (var i = 0; i < ZXING_URLS.length; i++) await loadScript(ZXING_URLS[i]);
-      var F = ZXing.BarcodeFormat, H = ZXing.DecodeHintType, hints = new Map();
-      hints.set(H.POSSIBLE_FORMATS, [F.CODE_128, F.CODE_39, F.CODE_93]);
-      hints.set(H.TRY_HARDER, true);
-      var reader = new ZXingBrowser.BrowserMultiFormatOneDReader(hints);
-      var FMT = {}; FMT[F.CODE_128] = "code_128"; FMT[F.CODE_39] = "code_39"; FMT[F.CODE_93] = "code_93";
-      return { name: "zxing-js", detect: function (canvas) { try { var r = reader.decodeFromCanvas(canvas); return Promise.resolve({ text: r.getText(), format: FMT[r.getBarcodeFormat()] || "" }); } catch (e) { return Promise.resolve(null); } } };
+      var mod = await import(POLYFILL_URL);
+      var w = await makeDetector(mod.BarcodeDetector);
+      if (!w) throw new Error("바코드 인식 엔진을 불러오지 못했습니다");
+      return { name: "zxing-cpp", det: w };
     })();
     detectorPromise.catch(function () { detectorPromise = null; });
     return detectorPromise;
   }
 
-  function cameraWanted() {
-    var host = $("scannerHost");
-    return state.user && state.mode === "camera" && store.get("camera", true) && host && !host.hidden && document.visibilityState === "visible";
+  // 같은 바코드 다시 읽기 판단 (태블릿 앱 RescanGate)
+  var gate = {
+    done: {}, inBox: {}, armed: {}, leaveMs: 600, againMs: SCAN_COOLDOWN_MS,
+    observe: function (codes, now) {
+      var self = this;
+      Object.keys(this.done).forEach(function (c) {
+        if (!self.armed[c] && codes.indexOf(c) < 0 && now - (self.inBox[c] || 0) > self.leaveMs) self.armed[c] = true;
+      });
+      codes.forEach(function (c) { self.inBox[c] = now; });
+    },
+    canFire: function (c, now) { return !this.done[c] || (this.armed[c] && now - this.done[c] > this.againMs); },
+    fired: function (c, now) { this.done[c] = now; this.inBox[c] = now; delete this.armed[c]; },
+    waitsLeave: function (c) { return !!this.done[c] && !this.armed[c]; },
+    resume: function (now) { var self = this; Object.keys(this.done).forEach(function (c) { self.inBox[c] = now; }); this.armed = {}; }
+  };
+
+  // 안내 칸 (카메라 그림 좌표). 바코드 폭 B, 칸 = 1.08B × 0.22B, 화면 가운데.
+  // 렌즈 줌이 없거나 1배면 칸을 작게 해서 초점이 맞는 거리(대략 15cm 이상)에서 찍히게
+  function guideBox(vw, vh) {
+    var frac = cam.zoom >= 1.8 ? 0.72 : cam.zoom >= 1.4 ? 0.6 : 0.48;   // 칸 폭 / 카메라 그림 폭
+    var B = Math.min(vw * frac / 1.08, vh * 0.9 / 0.22);
+    var bar = { x: (vw - 1.08 * B) / 2, y: (vh - 0.22 * B) / 2, w: 1.08 * B, h: 0.22 * B };
+    var bx = bar.x + 0.04 * B, by = bar.y + 0.07 * B;
+    var sx0 = Math.max(0, bx - 0.5 * B), sx1 = Math.min(vw, bx + 1.5 * B);
+    var sy0 = Math.max(0, by - 0.35 * B), sy1 = Math.min(vh, by + 0.45 * B);
+    return {
+      bar: bar, unit: B,
+      scan: { x: sx0, y: sy0, w: sx1 - sx0, h: sy1 - sy0 },
+      fit: function (pts) {
+        if (!pts || pts.length < 2) return "out";
+        var xs = pts.map(function (p) { return p.x; }), ys = pts.map(function (p) { return p.y; });
+        var len = Math.max.apply(null, xs) - Math.min.apply(null, xs);
+        if (len > 1.12 * B) return "big";
+        if (len < 0.55 * B) return "small";
+        // 가로: 네 모서리가 모두 칸 안. 세로: 바코드 가운데가 칸 안 (라벨마다 바코드 높이가 달라서 — 위치 라벨 등)
+        var m = 0.03 * B, cy = (Math.min.apply(null, ys) + Math.max.apply(null, ys)) / 2;
+        var inX = pts.every(function (p) { return p.x >= bar.x - m && p.x <= bar.x + bar.w + m; });
+        return inX && cy >= bar.y - m && cy <= bar.y + bar.h + m ? "ok" : "out";
+      }
+    };
   }
-  // 한 번 읽힌 값은 바로 쓰지 않고, 짧은 시간 안에 같은 값이 반복될 때만 확정 (흐리거나 기울어 생기는 오인식 방지)
-  // 목록에 있는 위치·품번은 2번, 목록에 없는 값은 3번 연속
-  var votes = {};
-  function caption(msg) {
+  function center(pts) {
+    var x = 0, y = 0;
+    pts.forEach(function (p) { x += p.x; y += p.y; });
+    return { x: x / pts.length, y: y / pts.length };
+  }
+
+  // 화면(뷰파인더, object-fit: cover) ↔ 카메라 그림 좌표
+  function viewMap(video) {
+    var box = video.parentElement.getBoundingClientRect(), vw = video.videoWidth, vh = video.videoHeight;
+    var s = Math.max(box.width / vw, box.height / vh);
+    return { s: s, ox: (box.width - vw * s) / 2, oy: (box.height - vh * s) / 2, box: box };
+  }
+  function placeGuide(video) {
+    var el = $("camGuide");
+    if (!el || !video.videoWidth) return;
+    var m = viewMap(video), g = guideBox(video.videoWidth, video.videoHeight).bar;
+    el.style.left = (g.x * m.s + m.ox) + "px"; el.style.top = (g.y * m.s + m.oy) + "px";
+    el.style.width = (g.w * m.s) + "px"; el.style.height = Math.max(36, g.h * m.s) + "px";
+    el.hidden = false;
+  }
+
+  var ADVICE = {
+    small: "조금 더 가까이 — 바코드가 칸을 채우게",
+    big: "조금 멀리 — 바코드가 칸 안에 다 들어오게",
+    out: "바코드를 칸 가운데로",
+    hold: "그대로 잠깐 멈춰 주세요",
+    again: "읽은 라벨입니다 — 칸 밖으로 뺐다가 다시 비추세요"
+  };
+  var IDLE_HINT = "바코드를 칸에 맞추세요 · 흐리면 화면을 눌러 초점";
+  function caption(msg, ok) {
     var cap = document.querySelector(".vf-caption");
     if (!cap) return;
-    cap.textContent = msg;
-    clearTimeout(cam.capTimer);
-    cam.capTimer = setTimeout(function () { if (cap.isConnected) cap.textContent = "바코드를 가이드 크기에 맞추세요 · 눌러서 초점"; }, 2500);
+    cap.textContent = msg || IDLE_HINT;
+    cap.classList.toggle("ok", !!ok);
   }
-  function onCameraRead(hit) {
-    var code = normCode(hit.text), t = Date.now();
-    if (!code) return;
-    // 방금 확정한 바코드가 계속 화면에 있으면 무시 (화면에서 사라지고 3초 지나야 다시 읽음)
-    if (cam.accepted && cam.accepted.code === code && t - cam.accepted.seen < SCAN_COOLDOWN_MS) { cam.accepted.seen = t; return; }
-    Object.keys(votes).forEach(function (k) { if (t - votes[k].last > VOTE_WINDOW_MS) delete votes[k]; });
-    var v = votes[code] = votes[code] || { n: 0, last: 0 };
-    v.n++; v.last = t;
-    var known = isLoc(code) || !!state.parts[code] || (state.auditOpen && !!findAuditItem(code));
-    var need = known ? 2 : 3;
-    if (v.n < need) { caption("인식 중: " + code); return; }
-    votes = {};
-    cam.accepted = { code: code, seen: t };
-    caption("인식: " + code + (hit.format ? " (" + hit.format.replace("_", " ").toUpperCase() + ")" : ""));
-    resolve(code, true);
+
+  function cameraWanted() {
+    var host = $("scannerHost");
+    return state.user && state.mode === "camera" && store.get("camera", true) && host && !host.hidden &&
+      document.visibilityState === "visible";
   }
-  // 해독 영역: 화면의 가이드 상자에 해당하는 원본 영상 영역 (조금 넉넉하게). full 이면 화면에 보이는 전체 영역
-  // 화면은 object-fit: cover + 디지털 줌(scale) 이므로 그 역변환으로 원본 좌표를 구함
+
   var cropCanvas = document.createElement("canvas");
-  function grab(video, full) {
-    var vw = video.videoWidth, vh = video.videoHeight;
-    var box = video.parentElement.getBoundingClientRect();
-    var guide = video.parentElement.querySelector(".vf-frame");
-    var s = Math.max(box.width / vw, box.height / vh) * (cam.digitalZoom || 1);
-    var ox = (box.width - vw * s) / 2, oy = (box.height - vh * s) / 2;
-    var gx, gy, gw, gh;
-    if (guide && !full) {
-      var g = guide.getBoundingClientRect();
-      var mx = g.width * 0.12, my = g.height * 0.6;
-      gx = g.left - box.left - mx; gy = g.top - box.top - my; gw = g.width + 2 * mx; gh = g.height + 2 * my;
-    } else {
-      gx = 0; gy = 0; gw = box.width; gh = box.height;
+  async function tick(video, det) {
+    if (!cam.stream) return;
+    if (video.readyState >= 2 && video.videoWidth) {
+      try {
+        var vw = video.videoWidth, vh = video.videoHeight, g = guideBox(vw, vh), sc = g.scan;
+        var k = Math.min(1, SCAN_MAX_W / sc.w);
+        var cw = Math.max(1, Math.round(sc.w * k)), ch = Math.max(1, Math.round(sc.h * k));
+        if (cropCanvas.width !== cw || cropCanvas.height !== ch) { cropCanvas.width = cw; cropCanvas.height = ch; }
+        cropCanvas.getContext("2d", { willReadFrequently: true }).drawImage(video, sc.x, sc.y, sc.w, sc.h, 0, 0, cw, ch);
+        var found = (await det.detect(cropCanvas)).filter(function (x) { return x.rawValue && x.cornerPoints && x.cornerPoints.length; })
+          .map(function (x) {
+            return { code: normCode(x.rawValue), format: x.format,
+                     pts: x.cornerPoints.map(function (p) { return { x: sc.x + p.x / k, y: sc.y + p.y / k }; }) };
+          });
+        var now = Date.now();
+        var gc = { x: g.bar.x + g.bar.w / 2, y: g.bar.y + g.bar.h / 2 };
+        var dist = function (x) { var c = center(x.pts); return Math.pow(c.x - gc.x, 2) + Math.pow(c.y - gc.y, 2); };
+        found.sort(function (a, b) { return dist(a) - dist(b); });
+        var inside = found.filter(function (x) { return g.fit(x.pts) === "ok"; });
+        var b = inside[0];
+        gate.observe(inside.map(function (x) { return x.code; }), now);
+        var c = b && center(b.pts);
+        var still = !!(b && cam.steady && cam.steady.code === b.code && Math.hypot(c.x - cam.steady.x, c.y - cam.steady.y) < 0.04 * g.unit);
+        cam.steady = b ? { code: b.code, x: c.x, y: c.y } : null;
+        if (now > cam.frozenUntil) {
+          if (b) caption(gate.waitsLeave(b.code) ? ADVICE.again : still ? "" : ADVICE.hold);
+          else caption(found[0] ? ADVICE[g.fit(found[0].pts)] : "");
+        }
+        // 확인 창이 떠 있으면 처리하지 않음 (위치 변경 창은 새 위치 라벨을 읽어 넣으므로 예외). 칸 안 기록은 계속 갱신
+        var blocked = !$("sheet").hidden && !$("newLoc");
+        if (b && still && !blocked && now > cam.frozenUntil && gate.canFire(b.code, now)) {
+          gate.fired(b.code, now);
+          freeze(video, b);
+          resolve(b.code, true, true);
+        }
+      } catch (e) { /* 한 장면 인식 실패는 무시 */ }
     }
-    var sx = Math.max(0, (gx - ox) / s), sy = Math.max(0, (gy - oy) / s);
-    var sw = Math.min(vw - sx, gw / s), sh = Math.min(vh - sy, gh / s);
-    var up = sw < 800 ? 800 / sw : 1;   // 너무 작으면 키워서 넘김 (가는 막대가 뭉개지지 않게)
-    cropCanvas.width = Math.round(sw * up); cropCanvas.height = Math.round(sh * up);
-    var ctx = cropCanvas.getContext("2d", { willReadFrequently: true });
-    ctx.imageSmoothingEnabled = up > 1;
-    ctx.drawImage(video, sx, sy, sw, sh, 0, 0, cropCanvas.width, cropCanvas.height);
-    return cropCanvas;
+    if (cam.stream) cam.timer = setTimeout(function () { tick(video, det); }, 90);
   }
 
-  // 줌: 렌즈 줌을 지원하면 카메라 줌, 아니면 화면 확대(디지털)
-  function applyZoom(video) {
-    var track = cam.stream && cam.stream.getVideoTracks()[0];
-    var z = cam.zoom, zc = cam.caps.zoom;
-    cam.hwZoom = false; cam.digitalZoom = z;
-    if (track && zc && zc.max >= 1.5) {
-      var hz = Math.max(zc.min || 1, Math.min(z, zc.max));
-      track.applyConstraints({ advanced: [{ zoom: hz }] }).catch(function () { /* 무시 */ });
-      cam.hwZoom = true; cam.digitalZoom = z / hz;
-    }
-    if (video) video.style.transform = cam.digitalZoom > 1 ? "scale(" + cam.digitalZoom + ")" : "";
-    if ($("zoomBtn")) $("zoomBtn").textContent = z + "x";
-  }
-  function cycleZoom() {
-    cam.zoom = ZOOMS[(ZOOMS.indexOf(cam.zoom) + 1) % ZOOMS.length];
-    store.set("zoom", cam.zoom);
-    applyZoom($("camVideo"));
+  // 찍힌 장면을 잠깐 멈춰 보여 줌: 셔터처럼 번쩍이고, 읽은 바코드를 초록 테두리와 값으로 표시
+  function freeze(video, hit) {
+    var cv = $("camFreeze");
+    if (!cv) return;
+    var m = viewMap(video), W = Math.round(m.box.width), H = Math.round(m.box.height);
+    cv.width = W; cv.height = H;
+    var ctx = cv.getContext("2d");
+    ctx.drawImage(video, m.ox, m.oy, video.videoWidth * m.s, video.videoHeight * m.s);
+    var pts = hit.pts.map(function (p) { return { x: p.x * m.s + m.ox, y: p.y * m.s + m.oy }; });
+    var xs = pts.map(function (p) { return p.x; }), ys = pts.map(function (p) { return p.y; });
+    var x0 = Math.min.apply(null, xs) - 6, x1 = Math.max.apply(null, xs) + 6, y0 = Math.min.apply(null, ys) - 6, y1 = Math.max.apply(null, ys) + 6;
+    if (y1 - y0 < 24) { var cy = (y0 + y1) / 2; y0 = cy - 12; y1 = cy + 12; }
+    ctx.fillStyle = "rgba(48,209,88,.22)"; ctx.strokeStyle = "#30D158"; ctx.lineWidth = 3;
+    ctx.beginPath(); ctx.rect(x0, y0, x1 - x0, y1 - y0); ctx.fill(); ctx.stroke();
+    ctx.font = "600 14px " + getComputedStyle(document.body).fontFamily;
+    var label = "✓ " + hit.code, tw = ctx.measureText(label).width + 20, ty = Math.max(4, y0 - 32);
+    ctx.fillStyle = "rgba(48,209,88,.95)"; ctx.beginPath(); ctx.roundRect ? ctx.roundRect((x0 + x1) / 2 - tw / 2, ty, tw, 26, 13) : ctx.rect((x0 + x1) / 2 - tw / 2, ty, tw, 26); ctx.fill();
+    ctx.fillStyle = "#04210D"; ctx.textAlign = "center"; ctx.textBaseline = "middle"; ctx.fillText(label, (x0 + x1) / 2, ty + 13);
+    cv.hidden = false;
+    var flash = document.querySelector(".vf-flash");
+    if (flash) { flash.classList.add("go"); setTimeout(function () { flash.classList.remove("go"); }, 30); }
+    cam.frozenUntil = Date.now() + FREEZE_MS;
+    caption("인식: " + hit.code + (hit.format ? " (" + String(hit.format).replace("_", " ").toUpperCase() + ")" : ""), true);
+    setTimeout(function () { if ($("camFreeze")) $("camFreeze").hidden = true; }, FREEZE_MS);
   }
 
-  // 화면을 누르면 그 위치에 초점 (안드로이드 크롬). 아이폰은 초점 지정 기능이 없어 다시 맞추기만 요청
-  function tapFocus(ev) {
-    var video = $("camVideo");
-    if (!cam.stream || !video) return;
-    var box = video.parentElement.getBoundingClientRect();
-    var x = ev.clientX - box.left, y = ev.clientY - box.top;
-    var ring = document.createElement("span");
-    ring.className = "focus-ring"; ring.style.left = x + "px"; ring.style.top = y + "px";
-    video.parentElement.appendChild(ring);
-    setTimeout(function () { ring.remove(); }, 900);
-    var track = cam.stream.getVideoTracks()[0], fm = cam.caps.focusMode || [];
-    var vw = video.videoWidth, vh = video.videoHeight;
-    var sc = Math.max(box.width / vw, box.height / vh) * (cam.digitalZoom || 1);
-    var nx = Math.min(1, Math.max(0, ((x - (box.width - vw * sc) / 2) / sc) / vw));
-    var ny = Math.min(1, Math.max(0, ((y - (box.height - vh * sc) / 2) / sc) / vh));
-    var single = fm.indexOf("single-shot") >= 0 ? "single-shot" : fm.indexOf("manual") >= 0 ? null : null;
-    var c = [];
-    if (cam.caps.pointsOfInterest !== undefined) c.push({ pointsOfInterest: [{ x: nx, y: ny }] });
-    if (single) c.push({ focusMode: single });
-    else if (fm.indexOf("continuous") >= 0) c.push({ focusMode: "continuous" });
-    if (!c.length) return;
-    track.applyConstraints({ advanced: c }).then(function () {
-      if (single && fm.indexOf("continuous") >= 0) setTimeout(function () {
-        if (cam.stream) track.applyConstraints({ advanced: [{ focusMode: "continuous" }] }).catch(function () {});
-      }, 2500);
-    }).catch(function () { /* 지원 안 함 */ });
-  }
   async function syncCamera() {
     if (!cameraWanted()) { stopCamera(); return; }
     if (cam.stream || cam.starting) return;
@@ -401,36 +440,38 @@
       var detP = getDetector();   // 엔진 준비와 카메라 켜기를 동시에
       var stream = await navigator.mediaDevices.getUserMedia({
         audio: false,
-        video: { facingMode: { ideal: "environment" }, width: { ideal: 1920 }, height: { ideal: 1080 } }
+        // 세로 화면에서는 그림이 세로로 와서 바코드 폭 방향 화소가 적다 → 가능한 높은 해상도로 (태블릿 앱과 같음)
+        video: { facingMode: { ideal: "environment" }, width: { ideal: 2560 }, height: { ideal: 1440 } }
       });
       cam.stream = stream;
       var track = stream.getVideoTracks()[0];
-      try {
-        var caps = track.getCapabilities ? track.getCapabilities() : {};
-        cam.caps = caps;
-        if (caps.focusMode && caps.focusMode.indexOf("continuous") >= 0) await track.applyConstraints({ advanced: [{ focusMode: "continuous" }] });
-        cam.torchOk = !!caps.torch;
-      } catch (e) { /* 초점·플래시 설정을 지원하지 않는 폰 */ }
+      var caps = {};
+      try { caps = track.getCapabilities ? track.getCapabilities() : {}; } catch (e) { caps = {}; }
+      cam.caps = caps;
+      cam.torchOk = !!caps.torch;
+      var zr = caps.zoom;
+      cam.zooms = zr && zr.max > 1 ? ZOOMS.filter(function (z) { return z >= (zr.min || 1) && z <= zr.max; }) : [];
+      if (cam.zooms.length < 2) cam.zooms = [];
+      var saved = store.get("zoom", 2);
+      cam.zoom = cam.zooms.indexOf(saved) >= 0 ? saved : (cam.zooms.length ? cam.zooms[cam.zooms.length - 1] : 1);
+      if (cam.zoom !== 1) await track.applyConstraints({ advanced: [{ zoom: cam.zoom }] }).catch(function () { cam.zoom = 1; });
       video.srcObject = stream;
       await video.play();
-      applyZoom(video);
-      if (cam.torchOk && $("torchBtn")) $("torchBtn").hidden = false;
-      var det = await detP;
-      cam.engine = det.name;
-      var busy = false;
-      cam.frame = 0;
-      cam.timer = setInterval(function () {
-        if (busy || !cam.stream || video.readyState < 2 || !video.videoWidth) return;
-        busy = true;
-        cam.frame++;
-        det.detect(grab(video, cam.frame % 4 === 0)).then(function (text) {
-          busy = false;
-          if (text && text.text) onCameraRead(text);
-        }, function () { busy = false; });
-      }, 100);
+      video.onresize = function () { placeGuide(video); };
+      placeGuide(video);
+      renderCamTools();
+      // 처음에는 안내 칸 가운데에 초점 (지원하는 폰)
+      focusAt(0.5, 0.5);
+      var d = await detP;
+      cam.engine = d.name;
+      gate.resume(Date.now());
+      cam.steady = null;
+      caption("");
+      tick(video, d.det);
     } catch (e) {
       stopCamera();
       cam.error = e && e.name === "NotAllowedError" ? "카메라 권한이 꺼져 있습니다. 브라우저 설정에서 허용해 주세요."
+        : e && e.name === "NotReadableError" ? "다른 앱이 카메라를 쓰고 있습니다. 그 앱을 닫고 다시 시도하세요."
         : e && e.name === "NotFoundError" ? "카메라를 찾지 못했습니다." : "카메라를 켜지 못했습니다. (" + (e && (e.name || e.message) || "오류") + ")";
       renderScanner();
     }
@@ -438,15 +479,59 @@
     if (!cameraWanted()) stopCamera();
   }
   function stopCamera() {
-    if (cam.timer) { clearInterval(cam.timer); cam.timer = null; }
+    if (cam.timer) { clearTimeout(cam.timer); cam.timer = null; }
     if (cam.stream) { cam.stream.getTracks().forEach(function (t) { t.stop(); }); cam.stream = null; }
     cam.torchOn = false;
+  }
+  function renderCamTools() {
+    var el = $("camTools");
+    if (!el) return;
+    el.innerHTML = (cam.zooms.length ? '<div class="vf-zooms" role="group" aria-label="확대">' + cam.zooms.map(function (z) {
+        return '<button class="vf-tool' + (z === cam.zoom ? " on" : "") + '" data-zoom="' + z + '">' + z + 'x</button>';
+      }).join("") + '</div>' : '') +
+      (cam.torchOk ? '<button class="vf-tool' + (cam.torchOn ? " on torch" : "") + '" id="torchBtn" aria-label="플래시">플래시</button>' : '');
+  }
+  function setZoom(z) {
+    if (!cam.stream || z === cam.zoom) return;
+    cam.stream.getVideoTracks()[0].applyConstraints({ advanced: [{ zoom: z }] }).then(function () {
+      cam.zoom = z; store.set("zoom", z);
+      placeGuide($("camVideo")); renderCamTools(); focusAt(0.5, 0.5);
+    }).catch(function () { cam.zooms = []; renderCamTools(); });
   }
   function toggleTorch() {
     if (!cam.stream) return;
     cam.torchOn = !cam.torchOn;
     cam.stream.getVideoTracks()[0].applyConstraints({ advanced: [{ torch: cam.torchOn }] }).catch(function () { cam.torchOn = false; });
-    if ($("torchBtn")) $("torchBtn").classList.toggle("on", cam.torchOn);
+    renderCamTools();
+  }
+  // 초점: 카메라 그림 기준 0~1 좌표 (안드로이드 크롬만 실제 지정 가능, 아이폰은 브라우저가 막아 둠)
+  function focusAt(nx, ny) {
+    if (!cam.stream) return;
+    var track = cam.stream.getVideoTracks()[0], fm = cam.caps.focusMode || [];
+    var poi = [{ x: nx, y: ny }];
+    var mode = fm.indexOf("single-shot") >= 0 ? "single-shot" : fm.indexOf("continuous") >= 0 ? "continuous" : null;
+    var c = {};
+    if (cam.caps.pointsOfInterest !== undefined || mode) {
+      if (cam.caps.pointsOfInterest !== undefined) c.pointsOfInterest = poi;
+      if (mode) c.focusMode = mode;
+      track.applyConstraints({ advanced: [c] }).then(function () {
+        if (mode === "single-shot" && fm.indexOf("continuous") >= 0) setTimeout(function () {
+          if (cam.stream) track.applyConstraints({ advanced: [{ pointsOfInterest: poi, focusMode: "continuous" }] }).catch(function () {});
+        }, 1200);
+      }).catch(function () { /* 지원 안 함 */ });
+    }
+  }
+  function tapFocus(ev) {
+    var video = $("camVideo");
+    if (!cam.stream || !video || !video.videoWidth) return;
+    cam.frozenUntil = 0;
+    if ($("camFreeze")) $("camFreeze").hidden = true;
+    var m = viewMap(video), x = ev.clientX - m.box.left, y = ev.clientY - m.box.top;
+    var ring = document.createElement("span");
+    ring.className = "focus-ring"; ring.style.left = x + "px"; ring.style.top = y + "px";
+    video.parentElement.appendChild(ring);
+    setTimeout(function () { ring.remove(); }, 900);
+    focusAt(Math.min(1, Math.max(0, (x - m.ox) / m.s / video.videoWidth)), Math.min(1, Math.max(0, (y - m.oy) / m.s / video.videoHeight)));
   }
   document.addEventListener("visibilitychange", syncCamera);
 
@@ -455,11 +540,11 @@
     var mode = '<div class="vf-mode"><button class="' + (state.mode === "camera" ? "on" : "") + '" data-mode="camera">카메라</button><button class="' + (state.mode === "bt" ? "on" : "") + '" data-mode="bt">스캐너</button></div>';
     var vf;
     if (state.mode === "camera" && store.get("camera", true)) {
-      vf = '<div class="viewfinder" role="img" aria-label="카메라 스캔 화면"><video id="camVideo" playsinline muted autoplay></video>' + mode +
-        '<div class="vf-tools"><button class="vf-tool" id="torchBtn" hidden aria-label="플래시">플래시</button><button class="vf-tool" id="zoomBtn" aria-label="줌">' + cam.zoom + 'x</button></div>' +
+      vf = '<div class="viewfinder cam" role="img" aria-label="카메라 스캔 화면"><video id="camVideo" playsinline muted autoplay></video>' +
+        '<canvas id="camFreeze" hidden></canvas>' + mode + '<div class="vf-tools" id="camTools"></div>' +
         (cam.error ? '<div class="vf-off"><div>' + esc(cam.error) + '<br><button data-cam-retry>다시 시도</button></div></div>'
-          : '<div class="vf-frame"><span></span><span></span><span></span><span></span></div><div class="vf-line"></div><div class="vf-caption">바코드를 가이드 크기에 맞추세요 · 눌러서 초점</div>') +
-        '</div>';
+          : '<div class="vf-frame" id="camGuide" hidden><span></span><span></span><span></span><span></span></div><div class="vf-caption">' + IDLE_HINT + '</div>') +
+        '<div class="vf-flash"></div></div>';
     } else {
       vf = '<div class="viewfinder bt"><div class="bt-line"><span class="dot"></span>스캐너로 바로 스캔하세요</div>' + mode + '</div>';
     }
@@ -983,7 +1068,7 @@
     if (el.hasAttribute("data-mode")) { state.mode = el.getAttribute("data-mode"); store.set("mode", state.mode); cam.error = null; renderScanner(); return; }
     if (el.hasAttribute("data-cam-retry")) { cam.error = null; renderScanner(); return; }
     if (el.id === "torchBtn") { toggleTorch(); return; }
-    if (el.id === "zoomBtn") { cycleZoom(); return; }
+    if (el.hasAttribute("data-zoom")) { setZoom(Number(el.getAttribute("data-zoom"))); return; }
     if (el.hasAttribute("data-go")) {
       var code = el.getAttribute("data-go");
       state.result.push({ type: isLoc(code) ? "loc" : "part", code: code });
