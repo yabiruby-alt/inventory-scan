@@ -76,12 +76,17 @@
   var SEARCH = '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="7" cy="7" r="5"/><path d="M11 11l3.5 3.5"/></svg>';
 
   var toastTimer;
+  // 화면 위쪽 작은 알림. 결과가 화면에 바로 보이는 동작에는 띄우지 않고, 오류·안 보이는 결과만. 누르면 닫힘
+  var TOAST_ERR = /실패|못했|없는|아닙니다|입력하세요|필요합니다|않습니다|눌러 주세요/;
   function toast(msg) {
+    var err = TOAST_ERR.test(msg);
     $("toastText").textContent = msg;
+    $("toast").classList.toggle("err", err);
     $("toast").hidden = false;
     clearTimeout(toastTimer);
-    toastTimer = setTimeout(function () { $("toast").hidden = true; }, 2600);
+    toastTimer = setTimeout(function () { $("toast").hidden = true; }, err ? 3000 : 1600);
   }
+  $("toast").addEventListener("click", function () { clearTimeout(toastTimer); $("toast").hidden = true; });
 
   // 스캔 성공 소리·진동
   var audioCtx = null;
@@ -508,7 +513,6 @@
   async function scanPhoto(file) {
     if (!file) return;
     caption("사진 분석 중…");
-    toast("사진 분석 중…");
     try {
       var zx = await loadZxing();
       var res = await zx.readBarcodes(file, { formats: ZX_FORMATS, tryHarder: true, tryRotate: true, tryInvert: false, tryDownscale: true, maxNumberOfSymbols: 8 });
@@ -860,7 +864,6 @@
     if (n) {
       state.auditLoc = code; state.auditFilter = "left";
       render(false); scrollToResult();
-      toast("위치 " + code + " · 조사할 부품 " + n + "건");
       return;
     }
     toast("이 조사 목록에 없는 바코드입니다: " + code);
@@ -898,8 +901,6 @@
     }
     auditCounts[a.id] = auditStatsOf(state.auditItems);
     closeSheet(); render(false);
-    var s = auditStatsOf(state.auditItems);
-    toast(status === "ok" ? "일치 · " + pn + " (" + s.done + "/" + s.total + ")" : "수량 다름 저장 · 체크 기록에 추가했습니다");
   }
 
   var auditChannel = null;
@@ -1213,13 +1214,13 @@
     else r = await sb.from("inv_checks").insert({ item_cd: pn, item_nm: p.item_nm, lct_cd: p.lct_cd, dms_qty: p.crt_qty, counted_qty: v, memo: memo || null, checked_by: state.user.id });
     if (r.error) { toast("저장하지 못했습니다: " + r.error.message); $("saveCheck").disabled = false; return; }
     await loadChecks();
-    closeSheet(); render(false); toast("체크 기록에 저장했습니다");
+    closeSheet(); render(false);
   }
   async function clearCheck(id) {
     var r = await sb.from("inv_checks").update({ cleared_at: new Date().toISOString(), cleared_by_name: state.user.name }).eq("id", id);
     if (r.error) { toast("지우지 못했습니다: " + r.error.message); return; }
     await loadChecks();
-    closeSheet(); render(false); toast("체크 기록을 지웠습니다");
+    closeSheet(); render(false);
   }
 
   async function saveMove(pn) {
@@ -1229,7 +1230,6 @@
       var id = await sendRequest("loc_change", pn, { from: from, to: to });
       state.moves[pn] = { from: from, to: to, status: "pending", reqId: id };
       closeSheet(); render(false);
-      toast(daemonStale() ? "요청했습니다 · DMS 연결 PC가 응답하면 반영됩니다" : "DMS에 위치 변경을 요청했습니다");
       waitRequest(id, function (res) {
         if (res.status === "done") {
           state.moves[pn] = { from: from, to: to, status: "done", time: hhmm() };
@@ -1249,7 +1249,6 @@
   }
 
   async function refreshPart(pn) {
-    toast("DMS에서 현재고를 다시 조회합니다");
     try {
       var id = await sendRequest("stock", pn);
       waitRequest(id, function (res) {
@@ -1291,7 +1290,6 @@
     if (r.error) { toast("시작하지 못했습니다: " + r.error.message); btn.disabled = false; return; }
     await loadAudits();
     await openAudit(state.auditOpen);
-    toast("조사를 시작했습니다 · 목록 " + state.auditItems.length + "건 고정");
   }
 
   function exportChecks() {

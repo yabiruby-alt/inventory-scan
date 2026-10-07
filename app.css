@@ -303,3 +303,8 @@ button.row:active, .row-btn:active { background: var(--fill); }
 .viewfinder.cam .vf-tools { flex-wrap: wrap; justify-content: flex-end; max-width: calc(100% - 140px); }
 .rdc-btn { margin-top: 12px; align-self: flex-start; }
 .tile-foot .btn-inline { font-size: 12px; padding: 0; }
+
+/* 알림: 위쪽 상단 바 아래, 작게, 누르면 닫힘 (아래 결과를 가리지 않게) */
+.toast { top: calc(50px + env(safe-area-inset-top, 0px)); bottom: auto; left: 50%; right: auto; transform: translateX(-50%); width: max-content; max-width: calc(100% - 32px); pointer-events: auto; }
+.toast div { font-size: 13px; padding: 7px 12px; border-radius: 16px; background: rgba(28,28,30,.86); line-height: 1.35; }
+.toast.err div { background: var(--danger); }
