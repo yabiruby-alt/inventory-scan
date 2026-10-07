@@ -795,6 +795,8 @@
   // 재고조사 항목: 조사 시작 때 고정한 RR 수량, 없으면(이 기능 전에 시작한 조사) 최신 RR 현재고
   function itemRr(it) { return it.rr_qty != null ? Number(it.rr_qty) : rrQty(it.item_cd); }
   function itemTotal(it) { return Number(it.qty) + itemRr(it); }
+  // RR 수량을 아는지: 조사 시작 때 고정했거나, RR 현재고가 한 번이라도 올라왔으면
+  function itemRrKnown(it) { return it.rr_qty != null || !!rrBasis() || Object.keys(state.rrParts).length > 0; }
   // 체크 기록의 비교 기준 (DMS + RR)
   function checkBase(c) { return Number(c.dms_qty) + (Number(c.rr_qty) || 0); }
   function splitNote(bmw, rr) { return rr ? '<div class="row-sub rr-split">BMW ' + qtyNum(bmw) + ' + RR ' + qtyNum(rr) + '</div>' : ''; }
@@ -1000,6 +1002,7 @@
     var st = auditStatsOf(state.auditItems), done = !!a.finished_at;
     return head +
       '<div class="aprog"><div class="aprog-nums"><b>' + st.done + '</b> / ' + st.total + ' 확인' + (st.diff ? ' · <span class="warn-text">수량 다름 ' + st.diff + '</span>' : '') + '</div>' + progressBar(st) + '</div>' +
+      (!done && state.auditItems.length && !itemRrKnown(state.auditItems[0]) ? '<div class="notice">RR 재고가 아직 올라오지 않아 BMW 수량만으로 비교합니다. DMS 연결 PC(데몬)를 확인하세요.</div>' : '') +
       (done ? '<div class="banner ok">' + hhmm(a.finished_at) + ' ' + esc(a.finished_by_name || "") + ' 종료 · 더 이상 고칠 수 없습니다</div>' +
           '<button class="btn-primary" id="auditReport" style="margin:0 0 8px">보고서 보기 · PDF 저장</button>' +
           '<button class="btn-ghost" id="auditReopen" style="margin:0 0 12px">다시 시작 (이어서 확인)</button>'
@@ -1044,9 +1047,9 @@
       '<div class="sheet-head"><button class="cancel" data-close>닫기</button><h2>재고 확인</h2><span></span></div>' +
       '<div class="sheet-loc mono-loc">' + esc(it.lct_cd || "위치 없음") + '</div>' +
       '<p class="sheet-sub"><span class="pn">' + esc(pn) + '</span><br>' + esc(it.item_nm) + '</p>' +
-      (itemRr(it) ? '<div class="bigqty"><span>BMW + RR 합계</span><b>' + qtyNum(itemTotal(it)) + '</b><small>EA</small></div>' +
-          '<p class="sheet-sub">BMW ' + qtyNum(it.qty) + ' + RR ' + qtyNum(itemRr(it)) + ' — 둘을 합한 수량과 비교하세요</p>'
-        : '<div class="bigqty"><span>DMS 현재고</span><b>' + qtyNum(it.qty) + '</b><small>EA</small></div>') + prev +
+      '<div class="bigqty"><span>BMW + RR 합계</span><b>' + qtyNum(itemTotal(it)) + '</b><small>EA</small></div>' +
+      '<div class="qsplit"><div><span>BMW</span><b>' + qtyNum(it.qty) + '</b></div><div><span>RR</span><b>' + (itemRrKnown(it) ? qtyNum(itemRr(it)) : "-") + '</b></div></div>' +
+      (itemRrKnown(it) ? '' : '<div class="notice">RR 재고가 아직 올라오지 않아 BMW 수량만 합계에 들어 있습니다. DMS 연결 PC(데몬)를 확인하세요.</div>') + prev +
       '<button class="btn-primary" id="aOk" data-pn="' + esc(pn) + '">일치</button>' +
       '<button class="btn-ghost" id="aDiffToggle">수량 다름</button>' +
       '<div id="aDiffBox" hidden>' +

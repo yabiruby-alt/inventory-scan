@@ -336,3 +336,7 @@ button.row:active, .row-btn:active { background: var(--fill); }
 .rv-state.err { color: var(--danger); }
 .rv-chrome { display: flex; align-items: center; justify-content: center; margin-top: 8px; text-decoration: none; }
 .rr-split { color: var(--accent); font-variant-numeric: tabular-nums; }
+.qsplit { display: flex; justify-content: center; gap: 28px; margin: 2px 0 12px; font-variant-numeric: tabular-nums; }
+.qsplit div { display: flex; align-items: baseline; gap: 6px; }
+.qsplit span { font-size: 14px; color: var(--label2); }
+.qsplit b { font-size: 22px; font-weight: 600; }

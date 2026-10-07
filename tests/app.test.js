@@ -371,7 +371,8 @@ function check(name, ok, extra) { results.push((ok ? 'PASS ' : 'FAIL ') + name +
   check('재고조사 목록에 BMW + RR 와 합계', arow.includes('BMW 1 + RR 4') && arow.includes('5EA'), arow);
   await page.click('[data-aitem="PN10000"]');
   const ash = await page.textContent('#sheet');
-  check('확인 창에 BMW + RR 합계', ash.includes('BMW + RR 합계') && ash.includes('BMW 1 + RR 4'), '');
+  const qs = await page.$eval('#sheet .qsplit', e => e.textContent);
+  check('확인 창에 합계와 BMW·RR 따로', ash.includes('BMW + RR 합계') && qs === 'BMW1RR4', qs);
   await page.click('#aDiffToggle');
   check('실사 수량 기본값 = 합계', (await page.inputValue('#aCountIn')) === '5');
   await page.click('#aDiffSave');   // 합계와 같으면 일치
@@ -384,6 +385,10 @@ function check(name, ok, extra) { results.push((ok ? 'PASS ' : 'FAIL ') + name +
   await page.waitForTimeout(300);
   const ck = checks.find(c => c.item_cd === 'PN10000' && !c.cleared_at);
   check('수량 다름 체크에 RR 수량도 저장', ck && ck.dms_qty === 1 && ck.rr_qty === 4 && ck.counted_qty === 3, JSON.stringify(ck));
+  await page.click('[data-aitem="PN10002"]');
+  const qs0 = await page.$eval('#sheet .qsplit', e => e.textContent);
+  check('RR 이 없는 부품도 확인 창에 RR 0 표시', qs0 === 'BMW3RR0' && !(await page.textContent('#sheet')).includes('아직 올라오지 않아'), qs0);
+  await page.click('[data-close]');
   await page.click('[data-tab="log"]');
   const lg = await page.textContent('#view');
   check('체크 기록: 합계 → 실사, 차이는 합계 기준', lg.includes('5 → 3') && lg.includes('−2') && lg.includes('BMW 1 + RR 4'), '');
