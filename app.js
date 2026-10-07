@@ -241,7 +241,8 @@
       if (t.getClientRects().length) return;   // 화면에 보이는 입력칸에 입력 중
       t.blur();                                 // 닫힌 창의 입력칸에 커서가 남아 있으면 스캐너 입력을 가로챔
     }
-    if (e.key === "Enter") { if (buf.length >= 5) resolve(buf, true); buf = ""; return; }
+    // 스캐너 끝의 Enter 가 마지막으로 누른 버튼(예: 스캔 탭)을 다시 누르면 결과가 지워지므로 기본 동작을 막음
+    if (e.key === "Enter") { e.preventDefault(); if (buf.length >= 5) resolve(buf, true); buf = ""; return; }
     if (e.key.length === 1 && /[0-9A-Za-z\- ]/.test(e.key)) {
       if (e.key === " ") e.preventDefault();
       buf += e.key;
@@ -1117,6 +1118,7 @@
     if (!el || el.disabled) return;
     if (el.hasAttribute("data-tab")) {
       var t = el.getAttribute("data-tab");
+      el.blur();
       closeSheet();
       if (t === "scan" && state.tab === "scan") state.result = [];
       if (t === "audit" && state.tab === "audit") { state.auditOpen = null; state.auditLoc = null; }
