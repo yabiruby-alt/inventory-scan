@@ -1,0 +1,706 @@
+<title>해운대 재고조사</title>
+<style>
+/* 레이아웃: 휴대폰 한 화면 앱. 상단 내비 + 스크롤 본문 + 하단 탭바, iOS 그룹 리스트 구조 */
+:root {
+  --bg: #F2F2F7;
+  --surface: #FFFFFF;
+  --fill: rgba(118,118,128,.12);
+  --label: #1C1C1E;
+  --label2: #6C6C70;
+  --label3: #AEAEB2;
+  --sep: rgba(60,60,67,.16);
+  --accent: #007AFF;
+  --accent-soft: rgba(0,122,255,.10);
+  --warn: #B25600;
+  --warn-soft: rgba(255,149,0,.16);
+  --danger: #D70015;
+  --ok: #1F7A36;
+  --ok-dot: #34C759;
+  --vf: #121316;
+  --vf-line: rgba(255,255,255,.85);
+  --bar: rgba(249,249,251,.86);
+  --shadow: 0 10px 30px rgba(0,0,0,.12);
+  --font: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Apple SD Gothic Neo", "Pretendard", "Malgun Gothic", system-ui, sans-serif;
+  --mono: "SF Mono", ui-monospace, Menlo, Consolas, "Roboto Mono", monospace;
+  --r: 12px;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #000000; --surface: #1C1C1E; --fill: rgba(118,118,128,.24);
+    --label: #F2F2F7; --label2: #98989F; --label3: #5A5A5E; --sep: rgba(84,84,88,.6);
+    --accent: #0A84FF; --accent-soft: rgba(10,132,255,.18);
+    --warn: #FF9F0A; --warn-soft: rgba(255,159,10,.18); --danger: #FF453A;
+    --ok: #30D158; --ok-dot: #30D158; --vf: #1C1C1E; --bar: rgba(22,22,24,.86);
+    --shadow: 0 10px 30px rgba(0,0,0,.5);
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #000000; --surface: #1C1C1E; --fill: rgba(118,118,128,.24);
+  --label: #F2F2F7; --label2: #98989F; --label3: #5A5A5E; --sep: rgba(84,84,88,.6);
+  --accent: #0A84FF; --accent-soft: rgba(10,132,255,.18);
+  --warn: #FF9F0A; --warn-soft: rgba(255,159,10,.18); --danger: #FF453A;
+  --ok: #30D158; --ok-dot: #30D158; --vf: #1C1C1E; --bar: rgba(22,22,24,.86);
+  --shadow: 0 10px 30px rgba(0,0,0,.5);
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+html, body { height: 100%; }
+body { margin: 0; background: var(--bg); color: var(--label); font: 16px/1.4 var(--font); letter-spacing: -0.01em; }
+button, input, textarea { font: inherit; color: inherit; }
+button { background: none; border: 0; padding: 0; cursor: pointer; text-align: inherit; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 6px; }
+
+.app { position: relative; height: 100%; max-width: 440px; margin: 0 auto; display: flex; flex-direction: column; background: var(--bg); overflow: hidden; }
+@media (min-width: 480px) { .app { border-inline: 1px solid var(--sep); } }
+
+/* 내비게이션 바 */
+.nav { flex: none; display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; height: 44px; padding-inline: 8px; background: var(--bar); backdrop-filter: saturate(180%) blur(20px); -webkit-backdrop-filter: saturate(180%) blur(20px); border-bottom: 0.5px solid transparent; z-index: 5; }
+.nav.scrolled { border-bottom-color: var(--sep); }
+.nav-back { display: inline-flex; align-items: center; gap: 2px; color: var(--accent); font-size: 17px; height: 44px; padding-right: 8px; justify-self: start; }
+.nav-back svg { width: 12px; height: 20px; }
+.nav-title { font-size: 17px; font-weight: 600; opacity: 0; transition: opacity .15s; white-space: nowrap; }
+.nav.scrolled .nav-title { opacity: 1; }
+.nav-action { justify-self: end; color: var(--accent); font-size: 17px; padding-inline: 8px; height: 44px; }
+
+.content { flex: 1; overflow-y: auto; overscroll-behavior: contain; padding: 0 16px 32px; }
+.large { font-size: 34px; line-height: 1.15; font-weight: 700; letter-spacing: -0.02em; margin: 2px 0 2px; text-wrap: balance; }
+.large.mono { font-family: var(--mono); font-size: 28px; font-weight: 600; letter-spacing: -0.01em; }
+.meta { margin: 0 0 18px; color: var(--label2); font-size: 15px; }
+
+.section-label { margin: 24px 16px 6px; font-size: 13px; color: var(--label2); text-transform: none; }
+.footnote { margin: 8px 16px 0; font-size: 13px; color: var(--label2); line-height: 1.45; }
+
+/* 그룹 리스트 */
+.group { background: var(--surface); border-radius: var(--r); overflow: hidden; }
+.row { display: flex; align-items: center; gap: 12px; min-height: 52px; padding: 10px 16px; position: relative; width: 100%; }
+.row + .row::before { content: ""; position: absolute; top: 0; left: 16px; right: 0; border-top: 0.5px solid var(--sep); }
+button.row:active, .row-btn:active { background: var(--fill); }
+.row-main { flex: 1; min-width: 0; }
+.row-title { font-size: 16px; }
+.row-sub { font-size: 13px; color: var(--label2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.row-value { color: var(--label2); font-size: 16px; text-align: right; }
+.chev { width: 8px; height: 13px; color: var(--label3); flex: none; }
+.mono-loc { font-family: var(--mono); letter-spacing: 0; }
+.pn { font-family: var(--mono); font-size: 15px; letter-spacing: 0; }
+.qty { font-variant-numeric: tabular-nums; font-size: 20px; font-weight: 600; text-align: right; min-width: 44px; }
+.qty small { font-size: 12px; font-weight: 500; color: var(--label2); margin-left: 2px; }
+.row-link { color: var(--accent); }
+.row-danger { color: var(--danger); }
+
+/* 위치 목록 행: 본문 버튼 + 체크 버튼 */
+.prow { display: flex; align-items: stretch; position: relative; }
+.prow + .prow::before { content: ""; position: absolute; top: 0; left: 16px; right: 0; border-top: 0.5px solid var(--sep); }
+.prow .row-btn { flex: 1; min-width: 0; display: flex; align-items: center; gap: 12px; padding: 10px 4px 10px 16px; }
+.check { flex: none; width: 52px; display: grid; place-items: center; }
+.check i { width: 24px; height: 24px; border-radius: 50%; border: 1.5px solid var(--label3); display: grid; place-items: center; }
+.check.on i { background: var(--warn); border-color: var(--warn); }
+.check.on i::after { content: ""; width: 10px; height: 2px; background: var(--surface); border-radius: 1px; }
+.diff-note { font-size: 12px; color: var(--warn); font-weight: 600; font-variant-numeric: tabular-nums; }
+
+/* 스캔 화면 */
+.viewfinder { position: relative; height: 150px; border-radius: 18px; background: var(--vf); overflow: hidden; display: grid; place-items: center; }
+.vf-frame { position: relative; width: 78%; height: 64px; }
+.vf-frame span { position: absolute; width: 22px; height: 22px; border: 3px solid var(--vf-line); }
+.vf-frame span:nth-child(1) { top: 0; left: 0; border-right: 0; border-bottom: 0; border-top-left-radius: 8px; }
+.vf-frame span:nth-child(2) { top: 0; right: 0; border-left: 0; border-bottom: 0; border-top-right-radius: 8px; }
+.vf-frame span:nth-child(3) { bottom: 0; left: 0; border-right: 0; border-top: 0; border-bottom-left-radius: 8px; }
+.vf-frame span:nth-child(4) { bottom: 0; right: 0; border-left: 0; border-top: 0; border-bottom-right-radius: 8px; }
+.vf-line { position: absolute; left: 8%; right: 8%; top: 50%; height: 2px; background: #FF3B30; opacity: .9; border-radius: 1px; }
+@media (prefers-reduced-motion: no-preference) { .vf-line { animation: pulse 1.6s ease-in-out infinite; } }
+@keyframes pulse { 50% { opacity: .35; } }
+.vf-caption { position: absolute; bottom: 10px; left: 0; right: 0; text-align: center; font-size: 13px; color: rgba(255,255,255,.72); }
+.vf-mode { position: absolute; top: 12px; left: 12px; display: flex; background: rgba(255,255,255,.14); border-radius: 9px; padding: 2px; }
+.vf-mode button { color: rgba(255,255,255,.8); font-size: 13px; padding: 5px 10px; border-radius: 7px; }
+.vf-mode button.on { background: rgba(255,255,255,.92); color: #000; font-weight: 600; }
+.vf-flash { position: absolute; inset: 0; background: rgba(255,255,255,.0); transition: background .25s; pointer-events: none; }
+.vf-flash.go { background: rgba(255,255,255,.35); transition: none; }
+
+.status { display: flex; align-items: center; gap: 8px; margin: 12px 4px 0; font-size: 14px; color: var(--label2); }
+.dot { width: 8px; height: 8px; border-radius: 50%; background: var(--ok-dot); flex: none; }
+
+.search { display: flex; align-items: center; gap: 8px; margin-top: 14px; height: 40px; padding-inline: 10px; background: var(--fill); border-radius: 10px; }
+.search svg { width: 16px; height: 16px; color: var(--label2); flex: none; }
+.search input { flex: 1; min-width: 0; border: 0; background: transparent; outline: none; font-size: 16px; }
+.search input::placeholder { color: var(--label2); }
+.search button { color: var(--accent); font-size: 15px; font-weight: 600; padding: 6px 2px; }
+
+.tag { display: inline-flex; align-items: center; height: 22px; padding-inline: 8px; border-radius: 6px; font-size: 12px; font-weight: 600; background: var(--fill); color: var(--label2); flex: none; }
+.tag.loc { background: var(--accent-soft); color: var(--accent); }
+.tag.warn { background: var(--warn-soft); color: var(--warn); }
+
+/* 위치 요약 */
+.summary { display: flex; gap: 24px; margin: 0 4px 16px; }
+.summary div { display: flex; flex-direction: column; }
+.summary b { font-size: 22px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.summary span { font-size: 13px; color: var(--label2); }
+.summary .w b { color: var(--warn); }
+
+.seg { display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; background: var(--fill); border-radius: 9px; padding: 2px; margin: 10px 0 14px; }
+.seg button { font-size: 13px; padding: 6px 0; border-radius: 7px; text-align: center; color: var(--label); }
+.seg button.on { background: var(--surface); font-weight: 600; box-shadow: 0 1px 3px rgba(0,0,0,.12); }
+
+/* 부품 재고 */
+.stock { display: grid; grid-template-columns: 1.55fr 1fr; gap: 10px; }
+.tile { background: var(--surface); border-radius: var(--r); padding: 14px 16px 14px; display: flex; flex-direction: column; min-width: 0; }
+.tile-label { font-size: 13px; color: var(--label2); }
+.tile-num { font-size: 52px; line-height: 1.05; font-weight: 700; letter-spacing: -0.03em; font-variant-numeric: tabular-nums; margin-top: 4px; }
+.tile-num small { font-size: 17px; font-weight: 500; color: var(--label2); margin-left: 4px; letter-spacing: 0; }
+.tile-num.zero { color: var(--label3); }
+.tile .tag { margin-top: 10px; align-self: flex-start; }
+.tile.rdc .tile-num { font-size: 32px; margin-top: 10px; font-weight: 600; }
+.tile-foot { margin-top: auto; padding-top: 10px; font-size: 12px; color: var(--label2); }
+.shimmer { height: 30px; margin-top: 12px; width: 60%; border-radius: 6px; background: var(--fill); }
+@media (prefers-reduced-motion: no-preference) { .shimmer { animation: pulse 1s ease-in-out infinite; } }
+
+.banner { display: flex; gap: 10px; align-items: center; margin-top: 12px; padding: 12px 14px; border-radius: var(--r); background: var(--warn-soft); color: var(--warn); font-size: 14px; font-weight: 500; }
+
+/* 체크 기록 */
+.diff { display: flex; flex-direction: column; align-items: flex-end; gap: 2px; font-variant-numeric: tabular-nums; }
+.diff b { font-size: 16px; font-weight: 600; }
+.empty { text-align: center; padding: 48px 24px; color: var(--label2); font-size: 15px; }
+.btn-secondary { display: inline-flex; align-items: center; gap: 6px; height: 34px; padding-inline: 14px; border-radius: 17px; background: var(--accent-soft); color: var(--accent); font-size: 15px; font-weight: 600; }
+
+/* 스위치 */
+.switch { position: relative; width: 51px; height: 31px; flex: none; }
+.switch input { position: absolute; opacity: 0; inset: 0; margin: 0; cursor: pointer; }
+.switch i { position: absolute; inset: 0; border-radius: 16px; background: var(--fill); transition: background .2s; pointer-events: none; }
+.switch i::after { content: ""; position: absolute; top: 2px; left: 2px; width: 27px; height: 27px; border-radius: 50%; background: #fff; box-shadow: 0 2px 4px rgba(0,0,0,.2); transition: transform .2s; }
+.switch input:checked + i { background: var(--ok-dot); }
+.switch input:checked + i::after { transform: translateX(20px); }
+.switch input:focus-visible + i { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* 탭바 */
+.tabbar { flex: none; display: grid; grid-template-columns: repeat(4, 1fr); padding: 6px 0 calc(6px + env(safe-area-inset-bottom, 0px)); background: var(--bar); backdrop-filter: saturate(180%) blur(20px); -webkit-backdrop-filter: saturate(180%) blur(20px); border-top: 0.5px solid var(--sep); z-index: 5; }
+.tab { display: flex; flex-direction: column; align-items: center; gap: 2px; font-size: 10.5px; font-weight: 500; color: var(--label3); position: relative; padding-top: 2px; }
+.tab svg { width: 26px; height: 26px; }
+.tab.on { color: var(--accent); }
+.badge { position: absolute; top: -2px; left: calc(50% + 6px); min-width: 18px; height: 18px; padding-inline: 5px; border-radius: 9px; background: #FF3B30; color: #fff; font-size: 12px; font-weight: 600; display: grid; place-items: center; }
+
+/* 시트 */
+.backdrop { position: absolute; inset: 0; background: rgba(0,0,0,.32); z-index: 20; }
+.sheet { position: absolute; left: 0; right: 0; bottom: 0; z-index: 21; background: var(--bg); border-radius: 14px 14px 0 0; padding: 6px 16px calc(20px + env(safe-area-inset-bottom, 0px)); box-shadow: var(--shadow); max-height: 88%; overflow-y: auto; }
+@media (prefers-reduced-motion: no-preference) { .sheet { animation: up .28s cubic-bezier(.2,.8,.2,1); } }
+@keyframes up { from { transform: translateY(100%); } }
+.grabber { width: 36px; height: 5px; border-radius: 3px; background: var(--label3); margin: 0 auto 6px; opacity: .6; }
+.sheet-head { display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; height: 44px; }
+.sheet-head h2 { margin: 0; font-size: 17px; font-weight: 600; }
+.sheet-head .cancel { color: var(--accent); font-size: 17px; justify-self: start; }
+.sheet-sub { text-align: center; color: var(--label2); font-size: 14px; margin: 0 0 16px; }
+.stepper { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.stepper-ctl { display: flex; align-items: center; gap: 4px; }
+.stepper-ctl button { width: 44px; height: 36px; border-radius: 9px; background: var(--fill); font-size: 22px; line-height: 1; display: grid; place-items: center; }
+.stepper-ctl input { width: 64px; height: 36px; text-align: center; border: 0; background: transparent; font-size: 22px; font-weight: 600; font-variant-numeric: tabular-nums; outline: none; }
+.field { width: 100%; border: 0; background: transparent; outline: none; font-size: 16px; padding: 0; resize: none; }
+.btn-primary { display: block; width: 100%; height: 50px; border-radius: 12px; background: var(--accent); color: #fff; font-size: 17px; font-weight: 600; text-align: center; margin-top: 20px; }
+.btn-primary:disabled { opacity: .4; }
+.btn-plain { display: block; width: 100%; height: 44px; color: var(--danger); font-size: 16px; text-align: center; margin-top: 6px; }
+
+/* 토스트 */
+.toast { position: absolute; left: 16px; right: 16px; bottom: calc(84px + env(safe-area-inset-bottom, 0px)); z-index: 30; display: flex; justify-content: center; pointer-events: none; }
+.toast div { background: rgba(28,28,30,.92); color: #fff; font-size: 14px; padding: 10px 16px; border-radius: 12px; box-shadow: var(--shadow); max-width: 100%; }
+/* 스캔 영역은 위에 고정, 결과는 아래에서 바로 확인 */
+.scanner { position: sticky; top: 0; z-index: 3; background: var(--bg); margin-inline: -16px; padding: 8px 16px 12px; }
+.scanner .search { margin-top: 8px; }
+.viewfinder.bt { height: 56px; display: flex; align-items: center; justify-content: space-between; padding-inline: 14px 8px; }
+.viewfinder.bt .vf-mode { position: static; }
+.bt-line { display: flex; align-items: center; gap: 10px; color: rgba(255,255,255,.88); font-size: 15px; }
+.nav-title.always { opacity: 1; }
+.nav-meta { justify-self: end; font-size: 13px; color: var(--label2); padding-right: 8px; font-variant-numeric: tabular-nums; }
+.rhead { display: flex; align-items: flex-start; gap: 10px; margin-top: 4px; }
+.rhead .rmain { flex: 1; min-width: 0; }
+.rtitle { margin: 0; font-size: 26px; line-height: 1.2; font-weight: 700; letter-spacing: -0.01em; }
+.rtitle.mono { font-family: var(--mono); font-weight: 600; letter-spacing: 0; }
+.rback { display: inline-flex; align-items: center; gap: 4px; height: 30px; color: var(--accent); font-size: 15px; }
+.rback svg { width: 9px; height: 15px; }
+.rclose { flex: none; width: 30px; height: 30px; border-radius: 50%; background: var(--fill); color: var(--label2); display: grid; place-items: center; margin-top: 2px; }
+.rclose svg { width: 12px; height: 12px; }
+.divider { display: flex; align-items: center; gap: 8px; margin: 4px 4px 10px; font-size: 13px; color: var(--label2); }
+.divider::after { content: ""; flex: 1; border-top: 0.5px solid var(--sep); }
+.idle { display: flex; flex-direction: column; align-items: center; text-align: center; padding: 48px 24px 8px; color: var(--label2); }
+.idle svg { width: 48px; height: 48px; color: var(--label3); margin-bottom: 14px; }
+.idle-title { margin: 0; font-size: 17px; font-weight: 600; color: var(--label); }
+.idle-sub { margin: 4px 0 0; font-size: 15px; }
+</style>
+
+<div class="app" id="app">
+  <header class="nav" id="nav"></header>
+  <main class="content" id="content"></main>
+  <nav class="tabbar" id="tabbar" aria-label="메뉴">
+    <button class="tab" data-tab="scan">
+      <svg viewBox="0 0 26 26" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M3 8V5.5A2.5 2.5 0 0 1 5.5 3H8M18 3h2.5A2.5 2.5 0 0 1 23 5.5V8M23 18v2.5a2.5 2.5 0 0 1-2.5 2.5H18M8 23H5.5A2.5 2.5 0 0 1 3 20.5V18"/><path d="M8 8v10M11 8v10M14.5 8v10M18 8v10" stroke-width="1.5"/></svg>
+      스캔
+    </button>
+    <button class="tab" data-tab="recent">
+      <svg viewBox="0 0 26 26" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="13" cy="13" r="9.5"/><path d="M13 7.5V13l3.5 2.5"/></svg>
+      최근 스캔
+    </button>
+    <button class="tab" data-tab="log">
+      <svg viewBox="0 0 26 26" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="3.5" width="18" height="19" rx="3"/><path d="M8.5 9.5l1.5 1.5 3-3M8.5 16.5l1.5 1.5 3-3M15.5 10h3M15.5 17h3"/></svg>
+      체크 기록
+      <span class="badge" id="badge" hidden></span>
+    </button>
+    <button class="tab" data-tab="settings">
+      <svg viewBox="0 0 26 26" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="13" cy="13" r="9.5"/><circle cx="13" cy="10.5" r="3.2"/><path d="M6.8 19.6c1.4-2.2 3.6-3.4 6.2-3.4s4.8 1.2 6.2 3.4" stroke-linecap="round"/></svg>
+      설정
+    </button>
+  </nav>
+  <div class="backdrop" id="backdrop" hidden></div>
+  <section class="sheet" id="sheet" hidden role="dialog" aria-modal="true"></section>
+  <div class="toast" id="toast" hidden><div id="toastText"></div></div>
+</div>
+
+<script>
+(function () {
+  // ---------- 예시 데이터 (실제 앱에서는 데몬이 10분마다 올리는 DMS 현재고) ----------
+  var BASIS = "14:20";
+  var GROUPS = { A: "상시재고", L: "로컬조달", O: "특수/단종계열", I: "비이동성", S: "특수발주" };
+  var PARTS = {};
+  function add(pn, name, loc, qty, grp, rdc, last) {
+    if (/^Z/.test(pn)) return; // Z로 시작하는 서비스 쿠폰·작업 코드는 쓰지 않음
+    PARTS[pn] = { pn: pn, name: name, loc: loc, qty: qty, grp: grp, rdc: rdc, last: last };
+  }
+  add("11428575211", "오일필터 엘리먼트", "A140112", 14, "A", 240, "2026-10-02");
+  add("13717619267", "에어필터 엘리먼트", "A140112", 6, "A", 38, "2026-09-26");
+  add("64119382885", "마이크로 필터 (활성탄)", "A140112", 4, "A", 0, "2026-09-18");
+  add("13328584875", "연료필터", "A140112", 2, "L", 11, "2026-08-30");
+  add("12120039664", "점화플러그", "A140112", 16, "A", 96, "2026-10-05");
+  add("83212365946", "엔진오일 LL-17FE+ 0W-20 1L", "A140112", 38, "A", 1200, "2026-10-06");
+  add("34106888459", "브레이크 패드 세트 프론트", "A070121", 3, "A", 22, "2026-09-29");
+  add("34216888460", "브레이크 패드 세트 리어", "A070121", 2, "A", 17, "2026-09-29");
+  add("34356890790", "브레이크 패드 마모센서 프론트", "A070121", 5, "A", 64, "2026-09-12");
+  add("34116860912", "브레이크 디스크 프론트", "A070121", 2, "O", 0, "2026-07-21");
+  add("51117451342", "프론트 범퍼 커버", "4F FLOOR", 1, "O", 2, "2026-06-14");
+  add("41007499187", "보닛", "4F FLOOR", 1, "S", 0, "2026-05-30");
+  add("51137404597", "키드니 그릴", "4F FLOOR", 2, "A", 9, "2026-09-03");
+  add("Z202102", "one-two pack giveaway", "A930101", 1, "A", 0, "2026-01-02");
+
+  // 한 위치에 부품이 100종 넘게 있는 경우 (BMW 표준 하드웨어 07 계열)
+  var HW = ["육각 볼트 M6x16", "육각 볼트 M8x20", "토크스 볼트 M6x12", "플랜지 너트 M6", "스프링 너트", "익스팬딩 리벳", "트림 클립", "와셔 8.4mm", "O-링 12x2", "실링 링 A14x20", "호스 클램프 20-32", "고무 그로밋", "배수 플러그", "스크류 ST4.8x16", "푸시 리벳"];
+  var seed = 7;
+  function rnd() { seed = (seed * 16807) % 2147483647; return seed / 2147483647; }
+  for (var i = 0; i < 126; i++) {
+    var gpn = "07" + String(Math.floor(100000000 + rnd() * 899999999));
+    add(gpn, HW[i % HW.length], "B070112", 1 + Math.floor(rnd() * 60), rnd() > .2 ? "A" : "L", Math.floor(rnd() * 900), "2026-0" + (7 + Math.floor(rnd() * 3)) + "-1" + Math.floor(rnd() * 9));
+  }
+
+  var state = {
+    tab: "scan",
+    result: [],          // 스캔 화면 아래 결과 영역의 이동 기록 (위치 → 부품)
+    mode: "camera",
+    sort: "pn",
+    rdcLoaded: {},
+    checks: {
+      "64119382885": { dms: 4, counted: 3, memo: "박스 1개 비어 있음", time: "14:12", by: "홍길동" }
+    },
+    recent: [
+      { code: "A140112", time: "14:31" },
+      { code: "34106888459", time: "14:28" },
+      { code: "4F FLOOR", time: "14:26" },
+      { code: "B070112", time: "14:22" },
+      { code: "11428575211", time: "14:18" }
+    ]
+  };
+
+  // ---------- 유틸 ----------
+  var $ = function (id) { return document.getElementById(id); };
+  function esc(s) { return String(s).replace(/[&<>"']/g, function (c) { return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]; }); }
+  function fmtPn(pn) { return pn; } // 품번은 라벨·DMS와 똑같이 붙여서 표시
+  // DMS LOCATION 형식: 영문 1 + 숫자 6 (A140112), 그리고 층 단위 위치 (4F FLOOR). 그 외 형식은 쓰지 않음
+  function normCode(raw) {
+    var c = String(raw || "").trim().toUpperCase().replace(/\s+/g, " ");
+    var f = c.match(/^(\d+)\s*F\s*FLOOR$/);
+    if (f) return f[1] + "F FLOOR";
+    return c.replace(/\s+/g, "");
+  }
+  function looksLoc(code) { return /^[A-Z]\d{6}$/.test(code) || /^\d+F FLOOR$/.test(code); }
+  function isLoc(code) { if (!looksLoc(code)) return false; for (var k in PARTS) { if (PARTS[k].loc === code) return true; } return false; }
+  function partsAt(loc) { return Object.keys(PARTS).map(function (k) { return PARTS[k]; }).filter(function (p) { return p.loc === loc; }); }
+  function now() { var d = new Date(); return String(d.getHours()).padStart(2, "0") + ":" + String(d.getMinutes()).padStart(2, "0"); }
+  var CHEV = '<svg class="chev" viewBox="0 0 8 13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1.5 1.5l5 5-5 5"/></svg>';
+  var BACK = '<svg viewBox="0 0 12 20" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M10 2L2 10l8 8"/></svg>';
+  var CLOSE = '<svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M2 2l8 8M10 2l-8 8"/></svg>';
+  var SEARCH = '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="7" cy="7" r="5"/><path d="M11 11l3.5 3.5"/></svg>';
+
+  var toastTimer;
+  function toast(msg) {
+    $("toastText").textContent = msg;
+    $("toast").hidden = false;
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(function () { $("toast").hidden = true; }, 2400);
+  }
+
+  // ---------- 스캔 처리 (카메라·블루투스·직접 입력 공통) ----------
+  // 스캔 영역은 그대로 두고 아래 결과만 바꿈 → 바로 다음 바코드를 이어서 스캔
+  // 카메라·스캐너로 같은 바코드가 다시 읽히면 3초 동안은 무시 (직접 입력·탭은 해당 없음)
+  var SCAN_COOLDOWN_MS = 3000;
+  var lastScan = { code: "", at: 0 };
+  function resolve(raw, fromScanner) {
+    var code = normCode(raw);
+    if (!code) return;
+    if (fromScanner) {
+      var t = Date.now();
+      if (code === lastScan.code && t - lastScan.at < SCAN_COOLDOWN_MS) return;
+      lastScan = { code: code, at: t };
+    }
+    if (/^Z/.test(code)) { toast("Z로 시작하는 서비스 코드는 조회하지 않습니다"); return; }
+    var type = isLoc(code) ? "loc" : PARTS[code] ? "part" : null;
+    if (!type) { toast("등록된 부품이나 위치가 아닙니다: " + code); return; }
+    state.recent = [{ code: code, time: now() }].concat(state.recent.filter(function (r) { return r.code !== code; })).slice(0, 50);
+    state.tab = "scan";
+    state.result = [{ type: type, code: code }];
+    render(true);
+    var flash = document.querySelector(".vf-flash");
+    if (flash) { flash.classList.add("go"); setTimeout(function () { flash.classList.remove("go"); }, 30); }
+    if ($("manualInput")) $("manualInput").value = "";
+  }
+
+  // 블루투스 스캐너는 키보드처럼 입력된 뒤 Enter가 들어옴
+  var buf = "", bufTimer;
+  document.addEventListener("keydown", function (e) {
+    var t = e.target;
+    if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA")) return;
+    if (!$("sheet").hidden) return;
+    if (e.key === "Enter") { if (buf.length >= 5) { resolve(buf, true); } buf = ""; return; }
+    if (e.key.length === 1 && /[0-9A-Za-z\- ]/.test(e.key)) {
+      if (e.key === " ") e.preventDefault();
+      buf += e.key;
+      clearTimeout(bufTimer);
+      bufTimer = setTimeout(function () { buf = ""; }, 300);
+    }
+  });
+
+  // ---------- 스캔 탭 ----------
+  function scannerBlock() {
+    var mode = '<div class="vf-mode"><button class="' + (state.mode === "camera" ? "on" : "") + '" data-mode="camera">카메라</button><button class="' + (state.mode === "bt" ? "on" : "") + '" data-mode="bt">스캐너</button></div>';
+    var vf = state.mode === "camera"
+      ? '<div class="viewfinder" role="img" aria-label="카메라 스캔 화면">' + mode +
+          '<div class="vf-frame"><span></span><span></span><span></span><span></span></div><div class="vf-line"></div>' +
+          '<div class="vf-caption">바코드를 가로로 맞추면 계속 읽습니다</div><div class="vf-flash"></div></div>'
+      : '<div class="viewfinder bt"><div class="bt-line"><span class="dot"></span>스캐너 연결됨 · 바로 스캔하세요</div>' + mode + '<div class="vf-flash"></div></div>';
+    return '<div class="scanner">' + vf +
+      '<form class="search" id="manual" autocomplete="off">' + SEARCH + '<input id="manualInput" inputmode="text" placeholder="품번 또는 위치 직접 입력" aria-label="품번 또는 위치"><button type="submit">조회</button></form>' +
+    '</div>';
+  }
+
+  function viewIdle() {
+    return '<div class="idle">' +
+      '<svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 14V9a3 3 0 0 1 3-3h5M34 6h5a3 3 0 0 1 3 3v5M42 34v5a3 3 0 0 1-3 3h-5M14 42H9a3 3 0 0 1-3-3v-5"/><path d="M15 15v18M20 15v18M26 15v18M32 15v18" stroke-width="2.4"/></svg>' +
+      '<p class="idle-title">위치나 부품 바코드를 스캔하세요</p>' +
+      '<p class="idle-sub">결과가 이 아래에 바로 표시됩니다</p>' +
+    '</div>' +
+    '<p class="footnote" style="text-align:center">시안 체험: 최근 스캔 메뉴에서 예시를 누르거나 A140112 입력</p>';
+  }
+
+  function viewRecent() {
+    var rows = state.recent.map(function (r) {
+      var loc = isLoc(r.code);
+      var title = loc ? '<span class="row-title mono-loc">' + esc(r.code) + '</span>' : '<span class="pn">' + esc(fmtPn(r.code)) + '</span>';
+      var sub = loc ? "부품 " + partsAt(r.code).length + "종" : PARTS[r.code].name;
+      return '<button class="row" data-open="' + esc(r.code) + '"><span class="tag ' + (loc ? "loc" : "") + '">' + (loc ? "위치" : "부품") + '</span><div class="row-main">' + title + '<div class="row-sub">' + esc(sub) + '</div></div><span class="row-value" style="font-size:13px">' + r.time + '</span>' + CHEV + '</button>';
+    }).join("");
+    return '<h1 class="large">최근 스캔</h1><p class="meta">오늘 ' + state.recent.length + '건</p>' +
+      (rows ? '<div class="group">' + rows + '</div><p class="footnote">누르면 스캔 화면에서 다시 조회합니다.</p>' : '<div class="empty">아직 스캔한 바코드가 없습니다</div>');
+  }
+
+  function resultHead(kind, title, isMono) {
+    var back = "";
+    if (state.result.length > 1) {
+      var prev = state.result[state.result.length - 2];
+      back = '<button class="rback" id="rBack">' + BACK + esc(prev.type === "loc" ? prev.code : fmtPn(prev.code)) + '</button>';
+    }
+    return back + '<div class="rhead"><div class="rmain"><span class="tag ' + (kind === "위치" ? "loc" : "") + '">' + kind + '</span>' +
+      '<h2 class="rtitle' + (isMono ? " mono" : "") + '" style="margin-top:6px">' + esc(title) + '</h2></div>' +
+      '<button class="rclose" id="rClose" aria-label="결과 닫기">' + CLOSE + '</button></div>';
+  }
+
+  function locRows(loc, q) {
+    var list = partsAt(loc);
+    if (q) {
+      q = q.toUpperCase().replace(/\s+/g, "");
+      list = list.filter(function (p) { return p.pn.indexOf(q) >= 0 || p.name.toUpperCase().replace(/\s+/g, "").indexOf(q) >= 0; });
+    }
+    list.sort(state.sort === "qty" ? function (a, b) { return b.qty - a.qty; } : state.sort === "check" ? function (a, b) { return (state.checks[b.pn] ? 1 : 0) - (state.checks[a.pn] ? 1 : 0) || a.pn.localeCompare(b.pn); } : function (a, b) { return a.pn.localeCompare(b.pn); });
+    if (!list.length) return '<div class="empty">찾는 부품이 이 위치에 없습니다</div>';
+    return '<div class="group">' + list.map(function (p) {
+      var c = state.checks[p.pn];
+      return '<div class="prow">' +
+        '<button class="row-btn" data-go="' + p.pn + '"><div class="row-main"><div class="pn">' + fmtPn(p.pn) + '</div><div class="row-sub">' + esc(p.name) + '</div>' + (c ? '<div class="diff-note">실사 ' + c.counted + ' · 차이 ' + (c.counted - c.dms > 0 ? "+" : "−") + Math.abs(c.counted - c.dms) + '</div>' : '') + '</div><div class="qty">' + p.qty + '<small>EA</small></div></button>' +
+        '<button class="check' + (c ? " on" : "") + '" data-check="' + p.pn + '" aria-label="' + fmtPn(p.pn) + ' 수량 다름 체크"><i></i></button>' +
+      '</div>';
+    }).join("") + '</div>';
+  }
+
+  function viewLoc(loc) {
+    var list = partsAt(loc);
+    var total = list.reduce(function (s, p) { return s + p.qty; }, 0);
+    var checked = list.filter(function (p) { return state.checks[p.pn]; }).length;
+    var big = list.length > 12;
+    return resultHead("위치", loc, true) +
+      '<p class="meta" style="margin-bottom:12px">해운대 부품창고 · ' + BASIS + ' 기준</p>' +
+      '<div class="summary"><div><b>' + list.length + '</b><span>부품 종류</span></div><div><b>' + total.toLocaleString() + '</b><span>총 수량</span></div><div class="' + (checked ? "w" : "") + '"><b>' + checked + '</b><span>수량 다름</span></div></div>' +
+      (big ? '<div class="search" style="margin-top:0">' + SEARCH + '<input id="locSearch" placeholder="이 위치에서 품번·품명 찾기" aria-label="이 위치에서 찾기"></div>' : '') +
+      '<div class="seg" role="tablist">' +
+        '<button data-sort="pn" class="' + (state.sort === "pn" ? "on" : "") + '">품번순</button>' +
+        '<button data-sort="qty" class="' + (state.sort === "qty" ? "on" : "") + '">수량 많은순</button>' +
+        '<button data-sort="check" class="' + (state.sort === "check" ? "on" : "") + '">체크 먼저</button>' +
+      '</div>' +
+      '<div id="locList">' + locRows(loc, "") + '</div>' +
+      '<p class="footnote">수량이 다르면 오른쪽 동그라미를 눌러 실사 수량을 남기세요.</p>';
+  }
+
+  function rdcTile(p) {
+    if (!state.rdcLoaded[p.pn]) {
+      return '<div class="tile-label">RDC 재고</div><div class="shimmer"></div><div class="tile-foot">DMS에서 조회 중</div>';
+    }
+    return '<div class="tile-label">RDC 재고</div><div class="tile-num' + (p.rdc ? "" : " zero") + '">' + p.rdc.toLocaleString() + '<small>EA</small></div><div class="tile-foot">방금 조회</div>';
+  }
+
+  function viewPart(pn) {
+    var p = PARTS[pn];
+    var c = state.checks[pn];
+    return resultHead("부품", fmtPn(pn), true) +
+      '<p class="meta" style="margin-bottom:12px">' + esc(p.name) + '</p>' +
+      '<div class="stock">' +
+        '<div class="tile"><div class="tile-label">지점 현재고</div><div class="tile-num' + (p.qty ? "" : " zero") + '">' + p.qty + '<small>EA</small></div><button class="tag loc" data-go="' + esc(p.loc) + '">위치 ' + esc(p.loc) + ' ›</button></div>' +
+        '<div class="tile rdc" id="rdcTile">' + rdcTile(p) + '</div>' +
+      '</div>' +
+      (c ? '<div class="banner">수량 다름 체크됨 · DMS ' + c.dms + ' / 실사 ' + c.counted + (c.memo ? ' · ' + esc(c.memo) : '') + '</div>' : '') +
+      '<div class="section-label">부품 정보</div>' +
+      '<div class="group">' +
+        '<div class="row"><div class="row-main">위치</div><span class="row-value mono-loc">' + esc(p.loc) + '</span></div>' +
+        '<div class="row"><div class="row-main">ALOIS 그룹</div><span class="row-value">' + p.grp + ' · ' + GROUPS[p.grp] + '</span></div>' +
+        '<div class="row"><div class="row-main">최종 입고</div><span class="row-value">' + p.last + '</span></div>' +
+        '<div class="row"><div class="row-main">재고 기준</div><span class="row-value">' + BASIS + ' · 10분마다 갱신</span></div>' +
+      '</div>' +
+      '<div class="section-label">작업</div>' +
+      '<div class="group">' +
+        '<button class="row" data-move="' + pn + '"><div class="row-main row-link">위치 변경</div>' + CHEV + '</button>' +
+        '<button class="row" data-check="' + pn + '"><div class="row-main row-link">' + (c ? "체크 내용 수정" : "수량 다름 체크") + '</div>' + CHEV + '</button>' +
+      '</div>';
+  }
+
+  function viewScan() {
+    var r = state.result.length ? state.result[state.result.length - 1] : null;
+    var body = !r ? viewIdle() : r.type === "loc" ? viewLoc(r.code) : viewPart(r.code);
+    return scannerBlock() + '<div id="result">' + body + '</div>';
+  }
+
+  // ---------- 다른 탭 ----------
+  function viewLog() {
+    var keys = Object.keys(state.checks);
+    var head = '<h1 class="large">체크 기록</h1><p class="meta">수량이 다른 부품 ' + keys.length + '건</p>';
+    if (!keys.length) return head + '<div class="empty">아직 체크한 부품이 없습니다.<br>위치를 스캔하고 수량이 다른 부품의 동그라미를 누르세요.</div>';
+    var rows = keys.map(function (pn) {
+      var c = state.checks[pn], p = PARTS[pn], d = c.counted - c.dms;
+      return '<button class="row" data-open="' + pn + '"><div class="row-main"><div class="pn">' + fmtPn(pn) + '</div><div class="row-sub">' + esc(p.name) + '</div><div class="row-sub">' + esc(p.loc) + ' · ' + c.time + ' · ' + esc(c.by) + (c.memo ? ' · ' + esc(c.memo) : '') + '</div></div>' +
+        '<div class="diff"><b>' + c.dms + ' → ' + c.counted + '</b><span class="tag warn">' + (d > 0 ? "+" : "−") + Math.abs(d) + '</span></div></button>';
+    }).join("");
+    return head +
+      '<div style="margin-bottom:14px"><button class="btn-secondary" id="exportBtn">엑셀로 내보내기</button></div>' +
+      '<div class="section-label" style="margin-top:0">오늘 · 10월 7일</div>' +
+      '<div class="group">' + rows + '</div>' +
+      '<p class="footnote">DMS 수량은 체크한 시점의 값입니다. 재고를 정정한 뒤 기록을 지우면 목록에서 사라집니다.</p>';
+  }
+
+  function viewSettings() {
+    return '<h1 class="large">설정</h1><p class="meta">AS_부산(해운중동)</p>' +
+      '<div class="section-label" style="margin-top:0">계정</div>' +
+      '<div class="group">' +
+        '<div class="row"><div class="row-main">이름</div><span class="row-value">홍길동</span></div>' +
+        '<div class="row"><div class="row-main">아이디</div><span class="row-value">parts01</span></div>' +
+      '</div>' +
+      '<p class="footnote">태블릿 입출고 앱과 같은 아이디로 로그인합니다.</p>' +
+      '<div class="section-label">스캔</div>' +
+      '<div class="group">' +
+        '<div class="row"><div class="row-main">카메라 스캔</div><label class="switch"><input type="checkbox" id="optCam" checked aria-label="카메라 스캔"><i></i></label></div>' +
+        '<div class="row"><div class="row-main">블루투스 스캐너</div><span class="row-value"><span class="dot" style="display:inline-block;margin-right:6px"></span>연결됨</span></div>' +
+        '<div class="row"><div class="row-main">스캔 성공 시 소리</div><label class="switch"><input type="checkbox" id="optSound" checked aria-label="스캔 성공 시 소리"><i></i></label></div>' +
+      '</div>' +
+      '<div class="section-label">데이터</div>' +
+      '<div class="group">' +
+        '<div class="row"><div class="row-main">현재고 기준 시각</div><span class="row-value">' + BASIS + '</span></div>' +
+        '<div class="row"><div class="row-main">갱신 주기</div><span class="row-value">10분</span></div>' +
+        '<div class="row"><div class="row-main">RDC 재고</div><span class="row-value">부품 조회 시 실시간</span></div>' +
+        '<div class="row"><div class="row-main">제외</div><span class="row-value">Z 서비스 코드</span></div>' +
+      '</div>' +
+      '<div class="section-label"></div>' +
+      '<div class="group"><button class="row" id="logoutBtn"><div class="row-main row-danger">로그아웃</div></button></div>' +
+      '<p class="footnote">디자인 시안입니다. 부품, 수량, 이름은 모두 예시입니다.</p>';
+  }
+
+  // ---------- 렌더 ----------
+  function render(resetScroll) {
+    var nav = $("nav"), content = $("content");
+    var html;
+    if (state.tab === "log") html = viewLog();
+    else if (state.tab === "recent") html = viewRecent();
+    else if (state.tab === "settings") html = viewSettings();
+    else html = viewScan();
+
+    if (state.tab === "scan") {
+      nav.innerHTML = '<span></span><span class="nav-title always">재고조사</span><span class="nav-meta">' + BASIS + ' 기준</span>';
+    } else {
+      nav.innerHTML = '<span></span><span class="nav-title">' + ({ log: "체크 기록", recent: "최근 스캔", settings: "설정" }[state.tab]) + '</span><span></span>';
+    }
+
+    var top = content.scrollTop;
+    content.innerHTML = html;
+    content.scrollTop = resetScroll ? 0 : top;
+    onScroll();
+
+    document.querySelectorAll(".tab").forEach(function (t) { t.classList.toggle("on", t.getAttribute("data-tab") === state.tab); });
+    var n = Object.keys(state.checks).length;
+    $("badge").hidden = !n;
+    $("badge").textContent = n;
+
+    var r = state.result[state.result.length - 1];
+    if (state.tab === "scan" && r && r.type === "part" && !state.rdcLoaded[r.code]) {
+      var pn = r.code;
+      setTimeout(function () {
+        state.rdcLoaded[pn] = true;
+        if ($("rdcTile")) $("rdcTile").innerHTML = rdcTile(PARTS[pn]);
+      }, 1500);
+    }
+  }
+
+  function onScroll() { $("nav").classList.toggle("scrolled", $("content").scrollTop > 4); }
+  $("content").addEventListener("scroll", onScroll, { passive: true });
+
+  // ---------- 시트 ----------
+  function openSheet(html) {
+    $("sheet").innerHTML = '<div class="grabber"></div>' + html;
+    $("sheet").hidden = false; $("backdrop").hidden = false;
+  }
+  function closeSheet() { $("sheet").hidden = true; $("backdrop").hidden = true; }
+  $("backdrop").addEventListener("click", closeSheet);
+
+  function openCheck(pn) {
+    var p = PARTS[pn], c = state.checks[pn];
+    var start = c ? c.counted : p.qty;
+    openSheet(
+      '<div class="sheet-head"><button class="cancel" data-close>취소</button><h2>수량 다름 체크</h2><span></span></div>' +
+      '<p class="sheet-sub"><span class="pn">' + fmtPn(pn) + '</span> · ' + esc(p.loc) + '</p>' +
+      '<div class="group">' +
+        '<div class="row"><div class="row-main">DMS 수량</div><span class="row-value qty" style="font-size:18px">' + p.qty + '</span></div>' +
+        '<div class="row stepper"><div class="row-main">실사 수량</div><div class="stepper-ctl"><button type="button" data-step="-1" aria-label="하나 빼기">−</button><input id="countIn" type="number" inputmode="numeric" min="0" value="' + start + '" aria-label="실사 수량"><button type="button" data-step="1" aria-label="하나 더하기">+</button></div></div>' +
+        '<div class="row"><textarea class="field" id="memoIn" rows="2" placeholder="메모 (선택)" aria-label="메모">' + esc(c ? c.memo : "") + '</textarea></div>' +
+      '</div>' +
+      '<p class="footnote" id="diffHint"></p>' +
+      '<button class="btn-primary" id="saveCheck" data-pn="' + pn + '">저장</button>' +
+      (c ? '<button class="btn-plain" id="clearCheck" data-pn="' + pn + '">체크 해제</button>' : '')
+    );
+    updateHint(p);
+  }
+  function updateHint(p) {
+    var v = parseInt($("countIn").value, 10);
+    var h = $("diffHint");
+    if (isNaN(v)) { h.textContent = "실사 수량을 입력하세요."; $("saveCheck").disabled = true; return; }
+    var d = v - p.qty;
+    $("saveCheck").disabled = d === 0;
+    h.textContent = d === 0 ? "DMS 수량과 같아서 체크할 내용이 없습니다." : "DMS보다 " + Math.abs(d) + "개 " + (d > 0 ? "많습니다." : "적습니다.");
+  }
+
+  function openMove(pn) {
+    var p = PARTS[pn];
+    openSheet(
+      '<div class="sheet-head"><button class="cancel" data-close>취소</button><h2>위치 변경</h2><span></span></div>' +
+      '<p class="sheet-sub"><span class="pn">' + fmtPn(pn) + '</span> · ' + esc(p.name) + '</p>' +
+      '<div class="group">' +
+        '<div class="row"><div class="row-main">현재 위치</div><span class="row-value mono-loc">' + esc(p.loc) + '</span></div>' +
+        '<div class="row"><div class="row-main">새 위치</div><input class="field" id="newLoc" style="text-align:right;width:55%;font-family:var(--mono)" placeholder="예: A140112" aria-label="새 위치" autocomplete="off"></div>' +
+      '</div>' +
+      '<p class="footnote">새 위치 라벨을 스캔해도 됩니다. 저장하면 DMS 위치가 바로 바뀝니다.</p>' +
+      '<button class="btn-primary" id="saveMove" data-pn="' + pn + '" disabled>DMS에 저장</button>'
+    );
+    setTimeout(function () { var el = $("newLoc"); if (el) el.focus(); }, 300);
+  }
+
+  // ---------- 이벤트 ----------
+  function scrollToResult() {
+    var res = $("result"), content = $("content");
+    if (!res) return;
+    var scanner = document.querySelector(".scanner");
+    content.scrollTop = Math.max(0, res.offsetTop - (scanner ? scanner.offsetHeight : 0));
+  }
+
+  document.addEventListener("click", function (e) {
+    var el = e.target.closest("button, [data-close]");
+    if (!el) return;
+    if (el.hasAttribute("data-tab")) {
+      var t = el.getAttribute("data-tab");
+      if (t === "scan" && state.tab === "scan") state.result = [];
+      state.tab = t;
+      render(true); return;
+    }
+    if (el.hasAttribute("data-close")) { closeSheet(); return; }
+    if (el.hasAttribute("data-mode")) { state.mode = el.getAttribute("data-mode"); render(false); return; }
+    if (el.hasAttribute("data-scan")) { resolve(el.getAttribute("data-scan")); return; }
+    if (el.hasAttribute("data-go")) {
+      var code = el.getAttribute("data-go");
+      state.result.push({ type: isLoc(code) ? "loc" : "part", code: code });
+      render(false); scrollToResult(); return;
+    }
+    if (el.hasAttribute("data-open")) {
+      state.tab = "scan";
+      var oc = el.getAttribute("data-open");
+      state.result = [{ type: isLoc(oc) ? "loc" : "part", code: oc }];
+      render(true); return;
+    }
+    if (el.id === "rBack") { state.result.pop(); render(false); scrollToResult(); return; }
+    if (el.id === "rClose") { state.result = []; render(true); return; }
+    if (el.hasAttribute("data-sort")) {
+      state.sort = el.getAttribute("data-sort");
+      document.querySelectorAll("[data-sort]").forEach(function (b) { b.classList.toggle("on", b === el); });
+      var q = $("locSearch") ? $("locSearch").value : "";
+      $("locList").innerHTML = locRows(state.result[state.result.length - 1].code, q);
+      return;
+    }
+    if (el.hasAttribute("data-check")) { openCheck(el.getAttribute("data-check")); return; }
+    if (el.hasAttribute("data-move")) { openMove(el.getAttribute("data-move")); return; }
+    if (el.hasAttribute("data-step")) {
+      var inp = $("countIn");
+      inp.value = Math.max(0, (parseInt(inp.value, 10) || 0) + parseInt(el.getAttribute("data-step"), 10));
+      updateHint(PARTS[$("saveCheck").getAttribute("data-pn")]);
+      return;
+    }
+    if (el.id === "saveCheck") {
+      var pn = el.getAttribute("data-pn");
+      state.checks[pn] = { dms: PARTS[pn].qty, counted: parseInt($("countIn").value, 10), memo: $("memoIn").value.trim(), time: now(), by: "홍길동" };
+      closeSheet(); render(false); toast("체크 기록에 저장했습니다");
+      return;
+    }
+    if (el.id === "clearCheck") {
+      delete state.checks[el.getAttribute("data-pn")];
+      closeSheet(); render(false); toast("체크를 해제했습니다");
+      return;
+    }
+    if (el.id === "saveMove") {
+      var pn2 = el.getAttribute("data-pn"), to = normCode($("newLoc").value);
+      var from = PARTS[pn2].loc;
+      PARTS[pn2].loc = to;
+      closeSheet(); render(false); toast("위치를 " + from + "에서 " + to + "(으)로 바꿨습니다");
+      return;
+    }
+    if (el.id === "exportBtn") { toast("시안에서는 내보내기가 동작하지 않습니다"); return; }
+    if (el.id === "logoutBtn") { toast("시안에서는 로그아웃이 동작하지 않습니다"); return; }
+  });
+
+  document.addEventListener("submit", function (e) {
+    if (e.target.id === "manual") { e.preventDefault(); resolve($("manualInput").value); }
+  });
+
+  document.addEventListener("input", function (e) {
+    if (e.target.id === "locSearch") $("locList").innerHTML = locRows(state.result[state.result.length - 1].code, e.target.value);
+    if (e.target.id === "countIn") updateHint(PARTS[$("saveCheck").getAttribute("data-pn")]);
+    if (e.target.id === "newLoc") {
+      var v = normCode(e.target.value);
+      var pn = $("saveMove").getAttribute("data-pn");
+      $("saveMove").disabled = !looksLoc(v) || v === PARTS[pn].loc;
+    }
+  });
+
+  render(true);
+})();
+</script>
