@@ -36,6 +36,7 @@
     result: [],            // 스캔 화면 아래 결과 이동 기록 (위치 → 부품)
     mode: store.get("scanMode", "bt"),   // 블루투스 스캐너 우선 (카메라는 인식률 개선 전까지 보조)
     sort: "pn",
+    locQ: null,            // 위치 화면 검색어 {loc, q} (화면을 다시 그려도 유지)
     parts: {},             // item_cd -> 현재고 행
     locs: {},              // lct_cd -> [item_cd]
     status: null,          // inv_status
@@ -242,6 +243,7 @@
     }
     pushRecent(code);
     state.tab = "scan";
+    state.locQ = null;
     state.result = [{ type: type, code: code }];
     render(true);
   }
@@ -681,18 +683,19 @@
   function viewLoc(loc) {
     var list = partsAt(loc);
     var chk = openChecksByItem();
+    var q = state.locQ && state.locQ.loc === loc ? state.locQ.q : "";
     var total = list.reduce(function (s, p) { return s + Number(p.crt_qty); }, 0);
     var checked = list.filter(function (p) { return chk[p.item_cd]; }).length;
     return resultHead("위치", loc) +
       '<p class="meta" style="margin-bottom:12px">해운대 부품창고 · ' + basis() + ' 기준</p>' +
       '<div class="summary"><div><b>' + list.length + '</b><span>부품 종류</span></div><div><b>' + qtyNum(total).toLocaleString() + '</b><span>총 수량</span></div><div class="' + (checked ? "w" : "") + '"><b>' + checked + '</b><span>수량 다름</span></div></div>' +
-      (list.length > 12 ? '<div class="search" style="margin-top:0">' + SEARCH + '<input id="locSearch" placeholder="이 위치에서 품번·품명 찾기" aria-label="이 위치에서 찾기"></div>' : '') +
+      (list.length > 12 ? '<div class="search" style="margin-top:0">' + SEARCH + '<input id="locSearch" value="' + esc(q) + '" placeholder="이 위치에서 품번·품명 찾기" aria-label="이 위치에서 찾기"></div>' : '') +
       '<div class="seg" role="tablist">' +
         '<button data-sort="pn" class="' + (state.sort === "pn" ? "on" : "") + '">품번순</button>' +
         '<button data-sort="qty" class="' + (state.sort === "qty" ? "on" : "") + '">수량 많은순</button>' +
         '<button data-sort="check" class="' + (state.sort === "check" ? "on" : "") + '">체크 먼저</button>' +
       '</div>' +
-      '<div id="locList">' + locRows(loc, "") + '</div>' +
+      '<div id="locList">' + locRows(loc, q) + '</div>' +
       '<p class="footnote">수량이 다르면 오른쪽 동그라미를 눌러 실사 수량을 남기세요.</p>';
   }
 
@@ -947,13 +950,32 @@
       .eq("audit_id", a.id).eq("item_cd", pn).select().single();
     if (r.error) { toast("저장하지 못했습니다: " + r.error.message); return; }
     Object.assign(it, r.data);
-    if (status === "diff") {
-      await sb.from("inv_checks").insert({ item_cd: pn, item_nm: it.item_nm, lct_cd: it.lct_cd, dms_qty: it.qty, counted_qty: counted,
-        memo: memo || (AUDIT_TITLE[a.kind] + " 중 확인"), audit_id: a.id, checked_by: state.user.id });
-      await loadChecks();
-    }
+    var synced = await syncAuditCheck(a, it, status, counted, memo);
     auditCounts[a.id] = auditStatsOf(state.auditItems);
     closeSheet(); render(false);
+    if (!synced) toast("조사 결과는 저장했지만 체크 기록에 반영하지 못했습니다. 다시 저장해 주세요");
+  }
+  // 조사 항목 하나에 열린 체크 기록은 하나만: 수량 다름이면 새로 쓰거나 고치고, 일치로 바꾸면 지움
+  async function syncAuditCheck(a, it, status, counted, memo) {
+    var ex = await sb.from("inv_checks").select("id").eq("audit_id", a.id).eq("item_cd", it.item_cd).is("cleared_at", null).order("id");
+    if (ex.error) return false;
+    var ids = ex.data.map(function (x) { return x.id; });
+    var keep = status === "diff" ? ids[0] : null;
+    var stale = ids.filter(function (id) { return id !== keep; });
+    var now = new Date().toISOString(), w;
+    if (stale.length) {
+      w = await sb.from("inv_checks").update({ cleared_at: now, cleared_by_name: state.user.name }).in("id", stale);
+      if (w.error) return false;
+    }
+    if (status === "diff") {
+      var row = { counted_qty: counted, memo: memo || (AUDIT_TITLE[a.kind] + " 중 확인") };
+      w = keep
+        ? await sb.from("inv_checks").update(Object.assign(row, { checked_at: now, checked_by: state.user.id, checked_by_name: state.user.name })).eq("id", keep)
+        : await sb.from("inv_checks").insert(Object.assign(row, { item_cd: it.item_cd, item_nm: it.item_nm, lct_cd: it.lct_cd, dms_qty: it.qty, audit_id: a.id, checked_by: state.user.id }));
+      if (w.error) return false;
+    }
+    if (stale.length || status === "diff") await loadChecks();
+    return true;
   }
 
   var auditChannel = null;
@@ -1091,8 +1113,15 @@
     }
 
     var top = content.scrollTop;
+    var ae = document.activeElement, focusId = !resetScroll && ae && ae.id && $("view").contains(ae) && /^(INPUT|TEXTAREA)$/.test(ae.tagName) ? ae.id : null;
+    var caret = focusId ? [ae.selectionStart, ae.selectionEnd] : null;
     view(html);
     content.scrollTop = resetScroll ? 0 : top;
+    if (focusId && $(focusId)) {
+      var fe = $(focusId);
+      fe.focus({ preventScroll: true });
+      try { fe.setSelectionRange(caret[0], caret[1]); } catch (e) { /* 커서 지정 못하는 칸 */ }
+    }
     onScroll();
 
     document.querySelectorAll(".tab").forEach(function (t) { t.classList.toggle("on", t.getAttribute("data-tab") === state.tab); });
@@ -1253,7 +1282,11 @@
   });
 
   document.addEventListener("input", function (e) {
-    if (e.target.id === "locSearch") $("locList").innerHTML = locRows(state.result[state.result.length - 1].code, e.target.value);
+    if (e.target.id === "locSearch") {
+      var sl = state.result[state.result.length - 1].code;
+      state.locQ = { loc: sl, q: e.target.value };
+      $("locList").innerHTML = locRows(sl, e.target.value);
+    }
     if (e.target.id === "countIn") updateHint(state.parts[$("saveCheck").getAttribute("data-pn")]);
     if (e.target.id === "newLoc") {
       var v = normCode(e.target.value), pn = $("saveMove").getAttribute("data-pn");
@@ -1351,6 +1384,8 @@
     var r = await sb.rpc("inv_start_audit", { p_kind: state.auditOpen });
     if (r.error) { toast("시작하지 못했습니다: " + r.error.message); btn.disabled = false; return; }
     await loadAudits();
+    var a = state.audits[state.auditOpen];
+    if (a && a.id === r.data && a.started_by !== state.user.id) toast((a.started_by_name || "다른 직원") + "님이 먼저 시작한 조사를 이어서 엽니다");
     await openAudit(state.auditOpen);
   }
 
