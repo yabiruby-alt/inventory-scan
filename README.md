@@ -20,6 +20,13 @@
 `daemon/config.example.json` 을 `daemon/config.local.json` 으로 복사하고 데몬 전용 계정 비밀번호를 넣는다.
 `config.local.json` 은 깃허브에 올라가지 않는다.
 
+## 재고조사 종료·보고서
+- 조사 화면의 "조사 종료"를 누르면 종료 시각·종료자를 남기고(`inv_finish_audit`), 그 뒤로는 항목을 고칠 수 없다 (DB 권한으로도 막힘).
+- 종료하면 보고서 미리보기가 열리고, PDF 를 미리 만들어 두었다가 "OneDrive 에 PDF 저장"(공유 메뉴) 또는 "기기에 내려받기".
+  종료한 조사는 언제든 "보고서 보기 · PDF 저장"으로 다시 만들 수 있다.
+- 방식은 태블릿 입출고 앱(`dsm-tablet-app` lib/pdfShare.ts)과 같다: A4 시트를 쪽마다 그림으로 찍어 jsPDF 로 묶은 이미지 PDF.
+- **보고서 양식은 `report.js` 의 "보고서 양식" 부분(CSS, `blocks`)만 바꾸면 된다.** 쪽 나누기·PDF·공유는 그대로 쓴다.
+
 ## RR(롤스로이스) 재고
 파츠베이 데몬(`partsbay.py`, 저장소 `dsparts-hd`)은 BMW DMS 창과 함께 RR DMS 창(`rr_page`)도 띄워 둔다.
 10분 주기에 `stockapp.on_cycle` 이 그 RR 창으로 RR 부품창고 현재고를 받아 `inv_rr_parts` 로 올리고,

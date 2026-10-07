@@ -305,6 +305,7 @@
     if (fromScanner) beep();
     if ($("manualInput")) $("manualInput").value = "";
 
+    if ($("reportView")) return;   // 보고서 미리보기 중
     if (state.tab === "audit" && state.auditOpen && currentAudit()) { auditScan(code); return; }
 
     var type = isLoc(code) ? "loc" : state.parts[code] ? "part" : null;
@@ -926,9 +927,11 @@
       var st = live && auditCounts[live.id];
       var total = live ? live.item_count : (s ? s.items.length : 0);
       var status = !live ? '<span class="pill">시작 전</span>'
+        : live.finished_at ? '<span class="pill ok">종료</span>'
         : st && st.done === total ? '<span class="pill ok">완료</span>' : '<span class="pill run">진행 중</span>';
       var foot = !live ? total + '건 · 시작하면 목록이 고정됩니다'
-        : (st ? st.done : 0) + ' / ' + total + ' 확인' + (st && st.diff ? ' · <b class="warn-text">수량 다름 ' + st.diff + '</b>' : '') + ' · ' + hhmm(live.started_at) + ' ' + esc(live.started_by_name || "") + ' 시작';
+        : (st ? st.done : 0) + ' / ' + total + ' 확인' + (st && st.diff ? ' · <b class="warn-text">수량 다름 ' + st.diff + '</b>' : '') + ' · ' +
+          (live.finished_at ? hhmm(live.finished_at) + ' ' + esc(live.finished_by_name || "") + ' 종료' : hhmm(live.started_at) + ' ' + esc(live.started_by_name || "") + ' 시작');
       return '<button class="acard" data-audit="' + k + '"' + (s ? '' : ' disabled') + '>' +
         '<div class="acard-top"><div class="row-main"><div class="acard-title">' + AUDIT_TITLE[k] + '</div><div class="row-sub">' + periodLabel(k, s) + '</div></div>' + status + CHEV + '</div>' +
         (live && st ? progressBar({ done: st.done, total: total }) : '') +
@@ -986,18 +989,22 @@
         '<p class="footnote">시작하면 지금 목록(' + items.length + '건)으로 고정됩니다.' + (k === "daily" ? ' 이후 입고되는 부품은 다음 조사에 들어갑니다.' : '') + '</p>' +
         '<div class="section-label">조사할 부품 미리보기</div>' + auditRows(items, false);
     }
-    var st = auditStatsOf(state.auditItems);
+    var st = auditStatsOf(state.auditItems), done = !!a.finished_at;
     return head +
       '<div class="aprog"><div class="aprog-nums"><b>' + st.done + '</b> / ' + st.total + ' 확인' + (st.diff ? ' · <span class="warn-text">수량 다름 ' + st.diff + '</span>' : '') + '</div>' + progressBar(st) + '</div>' +
-      (st.left === 0 ? '<div class="banner ok">조사를 마쳤습니다 · 수량 다름 ' + st.diff + '건은 체크 기록에 있습니다</div>' : '') +
+      (done ? '<div class="banner ok">' + hhmm(a.finished_at) + ' ' + esc(a.finished_by_name || "") + ' 종료 · 더 이상 고칠 수 없습니다</div>' +
+          '<button class="btn-primary" id="auditReport" style="margin:0 0 12px">보고서 보기 · PDF 저장</button>'
+        : st.left === 0 ? '<div class="banner ok">모두 확인했습니다 · 수량 다름 ' + st.diff + '건은 체크 기록에 있습니다</div>' +
+          '<button class="btn-primary" id="auditFinish" style="margin:0 0 12px">조사 종료 · 보고서 만들기</button>' : '') +
       (state.auditLoc ? '<div class="locchip"><span>위치 <b class="mono-loc">' + esc(state.auditLoc) + '</b>만 보는 중</span><button id="auditLocClear" aria-label="위치 필터 해제">' + CLOSE + '</button></div>' : '') +
       '<div class="seg" role="tablist">' +
         '<button data-afilter="left" class="' + (state.auditFilter === "left" ? "on" : "") + '">남은 것 ' + st.left + '</button>' +
         '<button data-afilter="diff" class="' + (state.auditFilter === "diff" ? "on" : "") + '">수량 다름 ' + st.diff + '</button>' +
         '<button data-afilter="all" class="' + (state.auditFilter === "all" ? "on" : "") + '">전체 ' + st.total + '</button>' +
       '</div>' +
-      auditRows(state.auditItems, true) +
-      '<p class="footnote">위치 바코드를 찍으면 그 위치만 보이고, 부품 바코드를 찍으면 확인 창이 열립니다.</p>';
+      auditRows(state.auditItems, !done) +
+      (done ? '' : (st.left ? '<button class="btn-ghost" id="auditFinish">조사 종료</button>' : '') +
+        '<p class="footnote">위치 바코드를 찍으면 그 위치만 보이고, 부품 바코드를 찍으면 확인 창이 열립니다. 다 마치면 "조사 종료"를 눌러 보고서를 만드세요.</p>');
   }
 
   function viewAudit() {
@@ -1008,6 +1015,7 @@
   function findAuditItem(pn) { for (var i = 0; i < state.auditItems.length; i++) if (state.auditItems[i].item_cd === pn) return state.auditItems[i]; return null; }
 
   function auditScan(code) {
+    if (currentAudit().finished_at) { toast("종료된 조사입니다"); return; }
     var it = findAuditItem(code);
     if (it) { pushRecent(code); openAuditItem(code); return; }
     var n = state.auditItems.filter(function (x) { return x.lct_cd === code; }).length;
@@ -1046,6 +1054,8 @@
       queueAuditMark(job);
       toast("연결이 불안정해 휴대폰에 저장했습니다. 연결되면 자동으로 보냅니다");
     } else if (res !== "ok" && res !== "check") {
+      await loadAudits();
+      if (currentAudit() && currentAudit().finished_at) { closeSheet(); render(false); toast("이미 종료된 조사라 저장하지 못했습니다"); return; }
       toast(res); return;
     }
     auditCounts[a.id] = auditStatsOf(state.auditItems);
@@ -1124,6 +1134,92 @@
     }
     if (stale.length || status === "diff") await loadChecks();
     return true;
+  }
+
+  // ---------- 재고조사 종료·보고서 (PDF: report.js) ----------
+  function openFinish() {
+    var a = currentAudit(), st = auditStatsOf(state.auditItems);
+    var wait = outbox.filter(function (j) { return j.auditId === a.id; }).length;
+    openSheet(
+      '<div class="sheet-head"><button class="cancel" data-close>취소</button><h2>조사 종료</h2><span></span></div>' +
+      '<div class="summary"><div><b>' + st.done + '</b><span>확인</span></div><div class="' + (st.diff ? "w" : "") + '"><b>' + st.diff + '</b><span>수량 다름</span></div><div class="' + (st.left ? "w" : "") + '"><b>' + st.left + '</b><span>미확인</span></div></div>' +
+      (st.left ? '<p class="sheet-sub warn-text">확인하지 않은 부품 ' + st.left + '건은 보고서에 "미확인"으로 남습니다.</p>' : '') +
+      (wait ? '<div class="notice">휴대폰에 두고 아직 보내지 못한 확인이 ' + wait + '건 있습니다. 연결되어 다 보낸 뒤 종료하세요.</div>' : '') +
+      '<p class="footnote">종료하면 이 조사는 더 이상 고칠 수 없고, 보고서를 PDF로 저장해 OneDrive 로 보낼 수 있습니다.</p>' +
+      '<button class="btn-primary" id="auditFinishOk"' + (wait ? ' disabled' : '') + '>종료하고 보고서 만들기</button>'
+    );
+  }
+  async function finishAudit(btn) {
+    btn.disabled = true;
+    var r = await sb.rpc("inv_finish_audit", { p_id: currentAudit().id });
+    if (r.error) { toast("종료하지 못했습니다: " + r.error.message); btn.disabled = false; return; }
+    await loadAudits();
+    closeSheet(); render(false);
+    openReport();
+  }
+
+  var REPORT_TITLE = { daily: "일일 재고조사 보고서", weekly: "주간 재고조사 보고서" };
+  function reportData(a, items) {
+    var diff = items.filter(function (it) { return it.status === "diff"; }), left = items.filter(function (it) { return !it.status; });
+    return {
+      title: REPORT_TITLE[a.kind], branch: state.user.branch + " 부품창고", period: periodLabel(a.kind, a),
+      started_at: a.started_at, started_by: a.started_by_name, finished_at: a.finished_at, finished_by: a.finished_by_name, printed_at: new Date(),
+      total: items.length, ok: items.length - diff.length - left.length, diff: diff.length, left: left.length,
+      diffItems: diff.map(function (it) { return { lct_cd: it.lct_cd, item_cd: it.item_cd, item_nm: it.item_nm, qty: it.qty, counted: it.counted, by: it.checked_by_name, memo: it.memo }; }),
+      leftItems: left
+    };
+  }
+  // 파일 이름: "261007 일일 재고조사 보고서", "260928-1003 주간 재고조사 보고서"
+  function reportFileName(a) {
+    var d = function (x) { return x.slice(2).replace(/-/g, ""); };
+    return d(a.period_start) + (a.kind === "weekly" ? "-" + d(a.period_end).slice(2) : "") + " " + REPORT_TITLE[a.kind];
+  }
+
+  var report = null;   // 미리보기 중인 보고서 {file, error, name}
+  function openReport() {
+    var a = currentAudit();
+    if (!a || !window.AuditReport) return;
+    var pages = AuditReport.pages(reportData(a, state.auditItems));
+    report = { file: null, error: "", name: reportFileName(a) };
+    var el = document.createElement("div");
+    el.id = "reportView"; el.className = "reportview";
+    el.innerHTML = '<div class="rv-bar"><button class="rv-close" id="rvClose">닫기</button><b>보고서 미리보기</b><span class="rv-n">' + pages.length + '쪽</span></div>' +
+      '<div class="rv-scroll" id="rvScroll"><div class="rv-pages" id="rvPages">' + pages.join("") + '</div></div>' +
+      '<div class="rv-panel">' +
+        '<div class="rv-name"><input id="rvName" value="' + esc(report.name) + '" aria-label="파일 이름" autocomplete="off"><span>.pdf</span></div>' +
+        '<p class="rv-state" id="rvState">PDF 만드는 중…</p>' +
+        '<button class="btn-primary" id="rvShare" style="margin-top:8px">OneDrive 에 PDF 저장</button>' +
+        '<button class="btn-ghost" id="rvDownload">기기에 내려받기</button>' +
+        '<p class="footnote">공유 메뉴에서 OneDrive 를 고른 뒤 저장할 폴더를 고르세요.</p>' +
+      '</div>';
+    $("app").appendChild(el);
+    var fit = function () { if ($("rvPages")) $("rvPages").style.zoom = Math.min(1, ($("rvScroll").clientWidth - 24) / (210 * 96 / 25.4)); };
+    fit(); window.addEventListener("resize", fit);
+    report.unfit = function () { window.removeEventListener("resize", fit); };
+    // 공유 메뉴는 버튼을 누른 직후에만 열리므로 PDF 를 미리 만들어 둔다
+    var mine = report;
+    setTimeout(function () {
+      AuditReport.buildPdf(pages, mine.name, function (n, total) { if (report === mine) $("rvState").textContent = "PDF 만드는 중… " + n + "/" + total + "쪽"; })
+        .then(function (f) { mine.file = f; if (report === mine) $("rvState").textContent = "PDF 준비됨 · " + (f.size / 1024 / 1024).toFixed(1) + "MB"; })
+        .catch(function (e) { mine.error = e.message; if (report === mine) { $("rvState").textContent = "PDF 를 만들지 못했습니다: " + e.message; $("rvState").classList.add("err"); } });
+    }, 400);
+  }
+  function closeReport() {
+    if (report && report.unfit) report.unfit();
+    report = null;
+    if ($("reportView")) $("reportView").remove();
+  }
+  // 미리 만든 PDF 에 지금 입력한 이름을 붙인다
+  function namedReport() {
+    var n = ($("rvName").value || "").replace(/[\\/:*?"<>|]/g, " ").replace(/\.pdf$/i, "").replace(/\s+/g, " ").trim() || report.name;
+    return new File([report.file], n + ".pdf", { type: "application/pdf" });
+  }
+  async function shareReport() {
+    if (!report.file) { toast(report.error ? "PDF 를 만들지 못했습니다: " + report.error : "PDF 를 만드는 중입니다. 다 되면 한 번 더 눌러 주세요"); return; }
+    var r = await AuditReport.shareFile(namedReport());
+    if (r === "shared") toast("보냈습니다");
+    else if (r === "unsupported") toast("이 기기는 공유 메뉴를 지원하지 않습니다 — '기기에 내려받기'를 쓰세요");
+    else if (r === "blocked") toast("공유 메뉴가 열리지 않았습니다 — 한 번 더 눌러 주세요");
   }
 
   var auditChannel = null;
@@ -1315,7 +1411,7 @@
     else if (state.tab === "audit") html = viewAudit();
     else html = viewScan();
 
-    var withScanner = state.tab === "scan" || (state.tab === "audit" && state.auditOpen && !!currentAudit());
+    var withScanner = state.tab === "scan" || (state.tab === "audit" && state.auditOpen && !!currentAudit() && !currentAudit().finished_at);
     showScanner(withScanner);
     if ($("daemonNotice")) $("daemonNotice").innerHTML = daemonNotice();
 
@@ -1490,6 +1586,15 @@
     }
     if (el.id === "exportBtn") { exportChecks(); return; }
     if (el.id === "movesOpen") { openMoveLog("settings"); return; }
+    if (el.id === "auditFinish") { openFinish(); return; }
+    if (el.id === "auditFinishOk") { finishAudit(el); return; }
+    if (el.id === "auditReport") { openReport(); return; }
+    if (el.id === "rvClose") { closeReport(); return; }
+    if (el.id === "rvShare") { shareReport(); return; }
+    if (el.id === "rvDownload") {
+      if (!report.file) { toast(report.error ? "PDF 를 만들지 못했습니다" : "PDF 를 만드는 중입니다. 잠시 뒤 다시 눌러 주세요"); return; }
+      AuditReport.downloadFile(namedReport()); toast("다운로드 폴더에 저장했습니다"); return;
+    }
     if (el.hasAttribute("data-movelog")) { openMoveLog("scan", el.getAttribute("data-movelog")); return; }
     if (el.id === "movesBack") { state.tab = state.movesBack; render(true); if (state.tab === "scan") scrollToResult(); return; }
     if (el.hasAttribute("data-mfilter")) { state.moveFilter = el.getAttribute("data-mfilter"); render(false); return; }
