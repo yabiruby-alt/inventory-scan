@@ -1046,10 +1046,13 @@
     openSheet(
       '<div class="sheet-head"><button class="cancel" data-close>닫기</button><h2>재고 확인</h2><span></span></div>' +
       '<div class="sheet-loc mono-loc">' + esc(it.lct_cd || "위치 없음") + '</div>' +
-      '<p class="sheet-sub"><span class="pn">' + esc(pn) + '</span><br>' + esc(it.item_nm) + '</p>' +
+      '<div class="sheet-pn">' + esc(pn) + '</div>' +
+      '<p class="sheet-sub">' + esc(it.item_nm) + '</p>' +
       '<div class="bigqty"><span>BMW + RR 합계</span><b>' + qtyNum(itemTotal(it)) + '</b><small>EA</small></div>' +
       '<div class="qsplit"><div><span>BMW</span><b>' + qtyNum(it.qty) + '</b></div><div><span>RR</span><b>' + (itemRrKnown(it) ? qtyNum(itemRr(it)) : "-") + '</b></div></div>' +
-      (itemRrKnown(it) ? '' : '<div class="notice">RR 재고가 아직 올라오지 않아 BMW 수량만 합계에 들어 있습니다. DMS 연결 PC(데몬)를 확인하세요.</div>') + prev +
+      (itemRrKnown(it) ? '' : '<div class="notice">RR 재고가 아직 올라오지 않아 BMW 수량만 합계에 들어 있습니다. DMS 연결 PC(데몬)를 확인하세요.</div>') +
+      '<div class="nowbox" id="aNow" data-pn="' + esc(pn) + '"><button class="btn-secondary" id="aNowBtn">현재 DMS 재고 조회</button>' +
+        '<div class="nowbox-hint">조사 시작 뒤 출고·입고로 바뀌었는지 확인</div></div>' + prev +
       '<button class="btn-primary" id="aOk" data-pn="' + esc(pn) + '">일치</button>' +
       '<button class="btn-ghost" id="aDiffToggle">수량 다름</button>' +
       '<div id="aDiffBox" hidden>' +
@@ -1058,6 +1061,37 @@
         '<button class="btn-primary" id="aDiffSave" data-pn="' + esc(pn) + '">수량 다름으로 저장</button>' +
       '</div>'
     );
+  }
+
+  // 재고 확인 창: 조사 시작 때 수량(스냅샷)과 지금 DMS 수량 비교 — 시작 뒤 출고·입고된 부품 확인용
+  async function auditNow(btn) {
+    var box = $("aNow"), pn = box.getAttribute("data-pn");
+    btn.disabled = true; btn.innerHTML = '<span class="spin"></span> DMS에서 조회 중…';
+    try {
+      var id = await sendRequest("stock", pn);
+      waitRequest(id, function (res) {
+        var b = $("aNow");
+        if (!b || b.getAttribute("data-pn") !== pn) return;   // 그 사이 창을 닫거나 다른 부품을 엶
+        if (res.status !== "done") { b.innerHTML = '<p class="rdc-err">조회 실패: ' + esc(res.error || "") + '</p><button class="btn-secondary" id="aNowBtn">다시 조회</button>'; return; }
+        var r = res.result, p = state.parts[pn];
+        if (p && r.found) {   // 받은 김에 현재고도 갱신
+          if (p.lct_cd !== r.lct_cd) { locRemove(p.lct_cd, pn); locAdd(r.lct_cd, pn); }
+          p.crt_qty = r.crt_qty; p.lct_cd = r.lct_cd;
+        }
+        b.innerHTML = auditNowHtml(findAuditItem(pn), r.found ? Number(r.crt_qty) : 0, r.lct_cd);
+      });
+    } catch (e) {
+      btn.disabled = false; btn.textContent = "현재 DMS 재고 조회";
+      toast("조회하지 못했습니다: " + e.message);
+    }
+  }
+  function auditNowHtml(it, bmwNow, lctNow) {
+    var rrNow = itemRrKnown(it) ? rrQty(it.item_cd) : 0, totNow = bmwNow + rrNow, d = totNow - itemTotal(it);
+    var msg = !d ? '<div class="nowbox-msg ok">조사 시작 뒤 바뀌지 않았습니다</div>'
+      : '<div class="nowbox-msg warn">조사 시작 뒤 <b>' + qtyNum(Math.abs(d)) + '개 ' + (d < 0 ? '줄었습니다' : '늘었습니다') + '</b> (' + (d < 0 ? '출고' : '입고') + ' 등)</div>' +
+        '<button class="btn-inline" id="aUseNow" data-qty="' + qtyNum(totNow) + '" data-d="' + qtyNum(d) + '">지금 수량 ' + qtyNum(totNow) + '개로 실사 입력 ›</button>';
+    return '<div class="nowbox-row"><span>지금 DMS</span><b>' + qtyNum(totNow) + '</b><small>EA</small></div>' +
+      '<div class="nowbox-sub">BMW ' + qtyNum(bmwNow) + ' · RR ' + qtyNum(rrNow) + (lctNow && lctNow !== it.lct_cd ? ' · 위치 ' + esc(lctNow) : '') + ' · ' + hhmm(new Date().toISOString()) + ' 조회</div>' + msg;
   }
 
   async function markAudit(pn, status, counted, memo) {
@@ -1586,7 +1620,8 @@
     openSheet(
       '<div class="sheet-head"><button class="cancel" data-close>취소</button><h2>수량 다름 체크</h2><span></span></div>' +
       '<div class="sheet-loc mono-loc">' + esc(p.lct_cd || "위치 없음") + '</div>' +
-      '<p class="sheet-sub"><span class="pn">' + esc(pn) + '</span><br>' + esc(p.item_nm) + '</p>' +
+      '<div class="sheet-pn">' + esc(pn) + '</div>' +
+      '<p class="sheet-sub">' + esc(p.item_nm) + '</p>' +
       '<div class="group">' +
         '<div class="row"><div class="row-main">DMS 수량</div><span class="row-value qty" style="font-size:var(--fs-xl)">' + qtyNum(p.crt_qty) + '</span></div>' +
         (rr ? '<div class="row"><div class="row-main">RR 수량</div><span class="row-value qty" style="font-size:var(--fs-xl)">' + qtyNum(rr) + '</span></div>' +
@@ -1695,6 +1730,15 @@
     if (el.id === "auditLocClear") { state.auditLoc = null; render(false); return; }
     if (el.hasAttribute("data-aitem")) { openAuditItem(el.getAttribute("data-aitem")); return; }
     if (el.id === "aOk") { el.disabled = true; markAudit(el.getAttribute("data-pn"), "ok", null); return; }
+    if (el.id === "aNowBtn") { auditNow(el); return; }
+    if (el.id === "aUseNow") {
+      var dn = Number(el.getAttribute("data-d"));
+      $("aDiffBox").hidden = false; $("aDiffToggle").hidden = true; $("aOk").hidden = true;
+      $("aCountIn").value = el.getAttribute("data-qty");
+      if (!$("aMemoIn").value) $("aMemoIn").value = "조사 시작 뒤 " + (dn < 0 ? "출고 " : "입고 ") + qtyNum(Math.abs(dn)) + "개 (지금 DMS " + el.getAttribute("data-qty") + "개)";
+      $("aDiffSave").scrollIntoView({ block: "nearest" });
+      return;
+    }
     if (el.id === "aDiffToggle") { $("aDiffBox").hidden = false; el.hidden = true; $("aOk").hidden = true; $("aCountIn").focus(); return; }
     if (el.hasAttribute("data-astep")) { var ai = $("aCountIn"); ai.value = Math.max(0, (parseFloat(ai.value) || 0) + parseInt(el.getAttribute("data-astep"), 10)); return; }
     if (el.id === "aDiffSave") {
