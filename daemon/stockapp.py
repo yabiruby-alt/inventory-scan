@@ -30,7 +30,8 @@ HERE = Path(__file__).resolve().parent
 CONFIG = HERE / "config.local.json"
 LOC_HALT = HERE / "LOC_CHANGE_HALT.txt"   # 이 파일이 있으면 위치 변경을 멈춤 (이상 감지 시 자동 생성)
 
-POLL_EVERY_SEC = 3
+POLL_EVERY_SEC = 1        # 앱 요청 확인 주기 (partsbay 대기 루프가 1초마다 부름)
+EXPIRE_EVERY_SEC = 30     # 오래된 요청 정리 주기
 HEARTBEAT_EVERY_SEC = 60
 LOGIN_RETRY_SEC = 120
 REQ_EXPIRE_SEC = 600      # 이보다 오래 기다린 요청은 처리하지 않음 (앱도 10분 기다리다 취소)
@@ -316,9 +317,12 @@ def poll(page) -> None:
             _rest("PATCH", f"inv_status?branch=eq.{_q(branch)}", {"daemon_seen_at": _now_iso()})
             _S.last_beat = t
         # 데몬이 멈춘 동안 쌓인 요청은 버림 (늦게 실행된 위치 변경이 DMS를 바꾸지 않게)
-        cutoff = _q(datetime.fromtimestamp(t - REQ_EXPIRE_SEC, timezone.utc).isoformat())
-        _rest("PATCH", f"inv_requests?branch=eq.{_q(branch)}&status=eq.pending&requested_at=lt.{cutoff}",
-              {"status": "cancelled", "error": "오래된 요청이라 처리하지 않았습니다", "finished_at": _now_iso()})
+        # (매초 하지 않고 30초마다 — 요청 확인을 가볍게)
+        if t - getattr(_S, "last_expire", 0.0) >= EXPIRE_EVERY_SEC:
+            cutoff = _q(datetime.fromtimestamp(t - REQ_EXPIRE_SEC, timezone.utc).isoformat())
+            _rest("PATCH", f"inv_requests?branch=eq.{_q(branch)}&status=eq.pending&requested_at=lt.{cutoff}",
+                  {"status": "cancelled", "error": "오래된 요청이라 처리하지 않았습니다", "finished_at": _now_iso()})
+            _S.last_expire = t
         reqs = _rest("GET", f"inv_requests?branch=eq.{_q(branch)}&status=eq.pending&order=requested_at.asc&limit=1"
                             "&select=id,kind,item_cd,params,requested_by_name", prefer="")
         if reqs:
@@ -343,8 +347,12 @@ def _handle(page, branch: str, req: dict) -> None:
     try:
         if not re.fullmatch(r"[A-Z0-9]{5,20}", pn) or pn.startswith("Z"):
             raise ValueError(f"품번 형식이 아닙니다: {pn}")
-        if kind in ("rdc", "stock"):
-            result = _lookup(page, branch, pn, update_part=(kind == "stock"))
+        if kind == "rdc":
+            result = _lookup(page, branch, pn, update_part=False)
+        elif kind == "stock" and (req.get("params") or {}).get("rdc"):
+            result = _lookup(page, branch, pn, update_part=True)   # 모르는 품번 조회: RDC 재고도 함께
+        elif kind == "stock":
+            result = _lookup_own(page, branch, pn)
         elif kind == "loc_change":
             result = _loc_change(page, branch, pn, req.get("params") or {}, req.get("requested_by_name"))
         else:
@@ -353,6 +361,48 @@ def _handle(page, branch: str, req: dict) -> None:
     except Exception as e:
         _log(f"요청 #{req['id']} {kind} {pn} 실패: {e}")
         _finish(req["id"], "failed", error=str(e)[:500])
+
+
+def _own_frame(page):
+    """현재고리스트 화면 — 이미 열려 있으면 메뉴를 다시 누르지 않고 그대로 씀 (빠름)"""
+    import __main__ as pb
+    for f in page.frames:
+        if "selectInventListMain" in f.url and not f.is_detached():
+            return f
+    pb.click_menu(page, "icon-parts", "현재고리스트 조회")
+    return pb.wait_for_frame(page, "selectInventListMain")
+
+
+def _lookup_own(page, branch: str, pn: str) -> dict:
+    """현재고 조회 (앱 '현재 DMS 재고 조회'): 우리 지점 재고만 — RDC 조회를 건너뛰어 빠르게"""
+    import __main__ as pb
+    body = {
+        "recordCountPerPage": 100, "pageIndex": 1, "firstIndex": 0, "lastIndex": 100,
+        "sCorpCd": pb.DEALER_CD, "sBizAreaCd": pb.BIZ_AREA_CD, "sBrchCd": pb.BRCH_CD,
+        "sProdType": "", "sItemCd": pn, "sItemNm": "", "sStrgeCd": "", "sCrtQtyYn": False,
+    }
+    try:
+        rows = pb.fetch_rows(_own_frame(page), "/parts/inventory/selectInventoryList.do", body)
+    except Exception:
+        # 열려 있던 화면이 낡았으면 메뉴부터 다시
+        pb.click_menu(page, "icon-parts", "현재고리스트 조회")
+        rows = pb.fetch_rows(pb.wait_for_frame(page, "selectInventListMain"),
+                             "/parts/inventory/selectInventoryList.do", body)
+    own = next((r for r in rows if r.get("strgNm") == "부품창고" and r.get("itemCd") == pn), None)
+    result = {
+        "found": own is not None,
+        "crt_qty": _num(own.get("crtQty")) if own else 0,
+        "able_qty": _num(own.get("ableQty")) if own else 0,
+        "lct_cd": ((own.get("lctCd") or "").strip() if own else "") or None,
+        "item_nm": own.get("itemNm") if own else None,
+        "checked_at": _now_iso(),
+    }
+    if own:
+        row = _part_row(branch, own)
+        _rest("POST", "inv_parts?on_conflict=branch,item_cd", [dict(row, updated_at=_now_iso())],
+              "resolution=merge-duplicates,return=minimal")
+        _S.parts_sent[pn] = row
+    return result
 
 
 def _lookup(page, branch: str, pn: str, update_part: bool) -> dict:
