@@ -236,7 +236,10 @@
   var buf = "", bufTimer;
   document.addEventListener("keydown", function (e) {
     var t = e.target;
-    if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA")) return;
+    if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA")) {
+      if (t.getClientRects().length) return;   // 화면에 보이는 입력칸에 입력 중
+      t.blur();                                 // 닫힌 창의 입력칸에 커서가 남아 있으면 스캐너 입력을 가로챔
+    }
     if (e.key === "Enter") { if (buf.length >= 5) resolve(buf, true); buf = ""; return; }
     if (e.key.length === 1 && /[0-9A-Za-z\- ]/.test(e.key)) {
       if (e.key === " ") e.preventDefault();
@@ -1059,7 +1062,11 @@
     $("sheet").innerHTML = '<div class="grabber"></div>' + html;
     $("sheet").hidden = false; $("backdrop").hidden = false;
   }
-  function closeSheet() { $("sheet").hidden = true; $("backdrop").hidden = true; }
+  function closeSheet() {
+    var a = document.activeElement;
+    if (a && $("sheet").contains(a)) a.blur();
+    $("sheet").hidden = true; $("backdrop").hidden = true;
+  }
   $("backdrop").addEventListener("click", closeSheet);
 
   function openCheck(pn) {
@@ -1109,6 +1116,7 @@
     if (!el || el.disabled) return;
     if (el.hasAttribute("data-tab")) {
       var t = el.getAttribute("data-tab");
+      closeSheet();
       if (t === "scan" && state.tab === "scan") state.result = [];
       if (t === "audit" && state.tab === "audit") { state.auditOpen = null; state.auditLoc = null; }
       if (t === "audit") loadAudits().then(function () { if (state.tab === "audit") render(false); });
