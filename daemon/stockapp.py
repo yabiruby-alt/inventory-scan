@@ -9,7 +9,12 @@ DMS 세션은 데몬 것 하나만 쓴다 (같은 계정으로 세션을 두 개
 설정: 같은 폴더의 config.local.json (깃허브에 올리지 않음)
   {"url": "...", "key": "sb_publishable_...", "email": "inventory-daemon@tablet.dongsung.local",
    "password": "...", "branch": "해운대", "dealer_cd": "001672", "brch_cd": "15"}
+  선택: "rr": {"corp_cd": "...", "biz_area_cd": "...", "brch_cd": "..."}  RR DMS 지점 코드 (없으면 RR 화면 검색칸 값을 씀)
+
+RR(롤스로이스) 재고: partsbay.py 가 BMW 창과 함께 RR DMS 창(rr_page)도 띄워 두므로, 10분 주기에 그 창으로
+RR 부품창고 현재고를 받아 inv_rr_parts 로 올림. RR 이 실패해도 BMW 업로드에는 영향 없음.
 """
+import inspect
 import json
 import re
 import sys
@@ -28,6 +33,7 @@ LOC_HALT = HERE / "LOC_CHANGE_HALT.txt"   # 이 파일이 있으면 위치 변�
 POLL_EVERY_SEC = 3
 HEARTBEAT_EVERY_SEC = 60
 LOGIN_RETRY_SEC = 120
+REQ_EXPIRE_SEC = 600      # 이보다 오래 기다린 요청은 처리하지 않음 (앱도 10분 기다리다 취소)
 LOC_RE = re.compile(r"^(?:[A-Z]\d{6}|\d+F FLOOR)$")
 
 # 모듈을 reload 해도 유지할 상태 (로그인 토큰, 마지막 업로드 내용)
@@ -42,7 +48,10 @@ if _S is None:
     _S.last_beat = 0.0
     _S.parts_sent = {}       # item_cd -> 마지막으로 올린 행 (바뀐 것만 올리기)
     _S.lists_sent = {}       # kind -> 마지막으로 올린 목록
+    _S.rr_sent = {}          # RR 현재고: item_cd -> 마지막으로 올린 행
     sys.modules["_stockapp_state"] = _S
+if not hasattr(_S, "rr_sent"):   # 이 항목이 생기기 전부터 떠 있던 데몬
+    _S.rr_sent = {}
 
 
 def _log(msg: str) -> None:
@@ -158,6 +167,33 @@ def _list_items(rows: list) -> list:
     return out
 
 
+def _upload_parts(table: str, sent_attr: str, branch: str, pw_rows: list, now: str):
+    """부품창고 현재고: 바뀐 행만 올리고, 없어진 품번은 지움 (Z 코드 제외)"""
+    sent = getattr(_S, sent_attr)
+    rows = {}
+    for r in pw_rows:
+        cd = r.get("itemCd")
+        if cd and not cd.startswith("Z"):
+            rows[cd] = _part_row(branch, r)
+    if not sent:   # 데몬 시작 후 처음: 서버에 있는 것과 비교할 기준이 없으니 전부 올림
+        changed = list(rows.values())
+    else:
+        changed = [v for k, v in rows.items() if sent.get(k) != v]
+    for i in range(0, len(changed), 500):
+        chunk = [dict(v, updated_at=now) for v in changed[i:i + 500]]
+        _rest("POST", f"{table}?on_conflict=branch,item_cd", chunk, "resolution=merge-duplicates,return=minimal")
+    if not sent:
+        # 처음: 이번에 올리지 않은 품번(예전 주기의 잔여)은 지움
+        _rest("DELETE", f"{table}?branch=eq.{_q(branch)}&updated_at=lt.{_q(now)}")
+    else:
+        removed = [k for k in sent if k not in rows]
+        for i in range(0, len(removed), 100):
+            ids = ",".join(f'"{x}"' for x in removed[i:i + 100])
+            _rest("DELETE", f"{table}?branch=eq.{_q(branch)}&item_cd=in.({_q(ids)})")
+    setattr(_S, sent_attr, rows)
+    return rows, changed
+
+
 def on_cycle(page, ctx: dict) -> None:
     """ctx: pw_rows(부품창고 현재고 원본), stockcheck, stockcheck_week, today(YYYY-MM-DD)"""
     if not CONFIG.exists():
@@ -168,28 +204,8 @@ def on_cycle(page, ctx: dict) -> None:
     branch = _cfg()["branch"]
     now = _now_iso()
 
-    # 1) 부품창고 현재고: 바뀐 행만 올리고, 없어진 품번은 지움 (Z 코드 제외)
-    rows = {}
-    for r in ctx["pw_rows"]:
-        cd = r.get("itemCd")
-        if cd and not cd.startswith("Z"):
-            rows[cd] = _part_row(branch, r)
-    if not _S.parts_sent:   # 데몬 시작 후 처음: 서버에 있는 것과 비교할 기준이 없으니 전부 올림
-        changed = list(rows.values())
-    else:
-        changed = [v for k, v in rows.items() if _S.parts_sent.get(k) != v]
-    for i in range(0, len(changed), 500):
-        chunk = [dict(v, updated_at=now) for v in changed[i:i + 500]]
-        _rest("POST", "inv_parts?on_conflict=branch,item_cd", chunk, "resolution=merge-duplicates,return=minimal")
-    removed = [k for k in _S.parts_sent if k not in rows] if _S.parts_sent else None
-    if removed is None:
-        # 처음: 이번에 올리지 않은 품번(예전 주기의 잔여)은 지움
-        _rest("DELETE", f"inv_parts?branch=eq.{_q(branch)}&updated_at=lt.{_q(now)}")
-    else:
-        for i in range(0, len(removed), 100):
-            ids = ",".join(f'"{x}"' for x in removed[i:i + 100])
-            _rest("DELETE", f"inv_parts?branch=eq.{_q(branch)}&item_cd=in.({_q(ids)})")
-    _S.parts_sent = rows
+    # 1) 부품창고 현재고
+    rows, changed = _upload_parts("inv_parts", "parts_sent", branch, ctx["pw_rows"], now)
 
     # 2) 재고조사 원본 목록
     sc, sw = ctx["stockcheck"], ctx["stockcheck_week"]
@@ -212,6 +228,76 @@ def on_cycle(page, ctx: dict) -> None:
     _S.last_beat = time.time()
     _log(f"업로드: 현재고 {len(rows)}건 (변경 {len(changed)}건), 일일 {len(lists['daily']['items'])}건, 주간 {len(lists['weekly']['items'])}건")
 
+    # 4) RR 현재고 (실패해도 BMW 쪽은 이미 끝남)
+    try:
+        n = _upload_rr(ctx, branch, now)
+        _rest("PATCH", f"inv_status?branch=eq.{_q(branch)}", {"rr_parts_at": now, "rr_error": None})
+        _log(f"업로드: RR 현재고 {n}건")
+    except Exception as e:
+        msg = str(e)[:300]
+        _log(f"RR 현재고 실패: {msg}")
+        try:
+            _rest("PATCH", f"inv_status?branch=eq.{_q(branch)}", {"rr_error": msg})
+        except Exception:
+            pass
+
+
+# ------------------------------------------------------------
+# RR(롤스로이스) DMS 부품창고 현재고
+# ------------------------------------------------------------
+
+def _rr_page(ctx: dict):
+    """partsbay 가 넘겨준 RR DMS 창. ctx 에 없으면 on_cycle 을 부른 run_cycle(page, rr_page) 의 rr_page 를 씀
+    (partsbay.py 를 고치거나 재시작하지 않아도 되게)"""
+    if ctx.get("rr_page") is not None:
+        return ctx["rr_page"]
+    f = inspect.currentframe()
+    try:
+        for _ in range(6):
+            f = f.f_back
+            if f is None:
+                return None
+            if "rr_page" in f.f_locals:
+                return f.f_locals["rr_page"]
+        return None
+    finally:
+        del f
+
+
+_RR_CODES_JS = """() => {
+  const v = (id) => { const el = document.getElementById(id); return el ? String(el.value || "").trim() : ""; };
+  return {corp_cd: v("sCorpCd"), biz_area_cd: v("sBizAreaCd"), brch_cd: v("sBrchCd")};
+}"""
+
+
+def _upload_rr(ctx: dict, branch: str, now: str) -> int:
+    import __main__ as pb   # partsbay.py 의 DMS 함수 사용 (RR 도 같은 My DMS 화면)
+    rp = _rr_page(ctx)
+    if rp is None:
+        raise RuntimeError("RR DMS 창이 없습니다 (partsbay 의 RR 연동이 꺼져 있음)")
+    try:
+        pb.click_menu(rp, "icon-parts", "현재고리스트 조회")
+    except Exception as e:
+        raise RuntimeError(f"RR DMS 메뉴를 열지 못했습니다 — RR DMS 로그인 확인 필요 ({type(e).__name__})")
+    frame = pb.wait_for_frame(rp, "selectInventListMain")
+    codes = _cfg().get("rr") or {}
+    if not all(codes.get(k) for k in ("corp_cd", "biz_area_cd", "brch_cd")):
+        rp.wait_for_timeout(1500)   # 검색칸이 채워질 때까지
+        codes = frame.evaluate(_RR_CODES_JS)
+    if not codes.get("corp_cd"):
+        raise RuntimeError(f"RR 지점 코드를 알 수 없습니다 (설정 파일에 rr 코드를 넣어 주세요): {codes}")
+    body = {
+        "recordCountPerPage": 200000, "pageIndex": 1, "firstIndex": 0, "lastIndex": 200000,
+        "sCorpCd": codes["corp_cd"], "sBizAreaCd": codes.get("biz_area_cd", ""), "sBrchCd": codes.get("brch_cd", ""),
+        "sProdType": "", "sItemCd": "", "sItemNm": "", "sStrgeCd": "", "sCrtQtyYn": True,
+    }
+    rows = pb.fetch_rows(frame, "/parts/inventory/selectInventoryList.do", body)
+    pw = [r for r in rows if r.get("strgNm") == "부품창고"]
+    if not pw:   # 조회가 잘못돼 0건이면 기존 RR 현재고를 지우지 않음
+        raise RuntimeError(f"RR 부품창고 현재고가 0건입니다 (전체 {len(rows)}건, 코드 {codes}) — 지우지 않고 그대로 둠")
+    rows_up, _changed = _upload_parts("inv_rr_parts", "rr_sent", branch, pw, now)
+    return len(rows_up)
+
 
 # ------------------------------------------------------------
 # 대기 중: 앱 요청 처리
@@ -229,6 +315,10 @@ def poll(page) -> None:
         if t - _S.last_beat >= HEARTBEAT_EVERY_SEC:
             _rest("PATCH", f"inv_status?branch=eq.{_q(branch)}", {"daemon_seen_at": _now_iso()})
             _S.last_beat = t
+        # 데몬이 멈춘 동안 쌓인 요청은 버림 (늦게 실행된 위치 변경이 DMS를 바꾸지 않게)
+        cutoff = _q(datetime.fromtimestamp(t - REQ_EXPIRE_SEC, timezone.utc).isoformat())
+        _rest("PATCH", f"inv_requests?branch=eq.{_q(branch)}&status=eq.pending&requested_at=lt.{cutoff}",
+              {"status": "cancelled", "error": "오래된 요청이라 처리하지 않았습니다", "finished_at": _now_iso()})
         reqs = _rest("GET", f"inv_requests?branch=eq.{_q(branch)}&status=eq.pending&order=requested_at.asc&limit=1"
                             "&select=id,kind,item_cd,params,requested_by_name", prefer="")
         if reqs:
@@ -244,6 +334,7 @@ def _finish(req_id: int, status: str, result=None, error=None) -> None:
 
 def _handle(page, branch: str, req: dict) -> None:
     # 다른 처리기가 먼저 가져가지 않도록 pending → running 으로 바꾼 경우에만 처리
+    # 앱이 그 사이 취소했으면 status 가 바뀌어 있어 가져오지 않음
     taken = _rest("PATCH", f"inv_requests?id=eq.{req['id']}&status=eq.pending",
                   {"status": "running", "started_at": _now_iso()}, "return=representation")
     if not taken:

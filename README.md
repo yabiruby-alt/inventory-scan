@@ -20,10 +20,28 @@
 `daemon/config.example.json` 을 `daemon/config.local.json` 으로 복사하고 데몬 전용 계정 비밀번호를 넣는다.
 `config.local.json` 은 깃허브에 올라가지 않는다.
 
+## RR(롤스로이스) 재고
+파츠베이 데몬(`partsbay.py`, 저장소 `dsparts-hd`)은 BMW DMS 창과 함께 RR DMS 창(`rr_page`)도 띄워 둔다.
+10분 주기에 `stockapp.on_cycle` 이 그 RR 창으로 RR 부품창고 현재고를 받아 `inv_rr_parts` 로 올리고,
+앱은 부품 화면의 "RR 재고"에 바로 보여 준다 (조회 버튼·RDC 조회 없음). 별도 RR 데몬·계정은 없다.
+- `partsbay.py` 는 고치지 않음: `on_cycle` 을 부른 `run_cycle(page, rr_page)` 의 `rr_page` 를 그대로 씀
+- RR 지점 코드는 RR 현재고 화면 검색칸 값을 씀. 안 되면 `config.local.json` 에 `"rr": {"corp_cd", "biz_area_cd", "brch_cd"}`
+- RR 을 못 올리면(로그인 필요 등) 기존 RR 현재고는 그대로 두고, 이유를 `inv_status.rr_error` 에 남겨 앱 설정 화면에 표시
+- RR 이 실패해도 BMW 업로드에는 영향 없음
+
 ## DMS 위치 변경
 재고마스터 화면에서 사람이 하는 순서 그대로 처리한다 (조회 → 줄 선택 → 로케이션코드만 수정 → 저장).
 저장 전에 로케이션코드 말고 바뀌는 값이 없는지, 저장 후 다시 조회해 다른 항목이 바뀌지 않았는지 확인한다.
 이상이 감지되면 `daemon/LOC_CHANGE_HALT.txt` 가 생기고 위치 변경을 멈춘다. 원인을 확인한 뒤 이 파일을 지우면 다시 동작한다.
+
+## 데몬이 멈췄을 때
+- 앱은 DMS 연결 PC 응답이 3분 넘게 없으면 RDC 조회·현재고 조회·위치 변경 요청을 보내지 않는다.
+- 보낸 요청이 10분 동안 처리되지 않으면 앱이 취소한다 (`inv_cancel_request`). 데몬도 10분 지난 대기 요청은 처리하지 않고 `cancelled` 로 정리한다.
+  → 데몬을 다시 켰을 때 예전 위치 변경이 뒤늦게 DMS에 저장되지 않는다.
+
+## 시험
+`node tests/app.test.js` — 가짜 Supabase 응답으로 실제 브라우저에서 앱을 돌려 봄 (준비 방법은 파일 위 주석).
+위치 검색어 유지, 현재고 바뀐 것만 받기, 전파 끊김 시 재고조사 저장·재전송, 체크 기록 중복 방지, 데몬 멈춤 안내, 위치 변경 이력 화면을 확인한다.
 
 ## 정해진 규칙
 - 위치: 영문 1 + 숫자 6 (`A140112`), 그리고 `4F FLOOR` 형태. 그 외 형식은 쓰지 않음

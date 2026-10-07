@@ -7,3 +7,5 @@ tools/probe_out/
 __pycache__/
 daemon/*.log
 daemon/LOC_CHANGE_HALT.txt
+tests/vendor/
+node_modules/
