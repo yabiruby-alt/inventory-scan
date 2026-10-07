@@ -250,7 +250,9 @@
   var POLYFILL_URL = "https://cdn.jsdelivr.net/npm/barcode-detector@3.2.2/ponyfill/+esm";
   var ZXING_URLS = ["https://cdn.jsdelivr.net/npm/@zxing/library@0.23.0/umd/index.min.js",
                     "https://cdn.jsdelivr.net/npm/@zxing/browser@0.2.1/umd/zxing-browser.min.js"];
-  var cam = { stream: null, timer: null, starting: false, error: null, torchOk: false, torchOn: false, engine: "", frame: 0 };
+  var cam = { stream: null, timer: null, starting: false, error: null, torchOk: false, torchOn: false, engine: "", frame: 0,
+              caps: {}, zoom: store.get("zoom", 2), hwZoom: false, digitalZoom: 1 };
+  var ZOOMS = [1, 2, 3];
   var detectorPromise = null;
 
   function loadScript(src) {
@@ -298,7 +300,7 @@
     if (!cap) return;
     cap.textContent = msg;
     clearTimeout(cam.capTimer);
-    cam.capTimer = setTimeout(function () { if (cap.isConnected) cap.textContent = "바코드를 가로로 맞추면 계속 읽습니다"; }, 2500);
+    cam.capTimer = setTimeout(function () { if (cap.isConnected) cap.textContent = "바코드를 가이드 크기에 맞추세요 · 눌러서 초점"; }, 2500);
   }
   function onCameraRead(hit) {
     var code = normCode(hit.text), t = Date.now();
@@ -316,13 +318,78 @@
     caption("인식: " + code + (hit.format ? " (" + hit.format.replace("_", " ").toUpperCase() + ")" : ""));
     resolve(code, true);
   }
+  // 해독 영역: 화면의 가이드 상자에 해당하는 원본 영상 영역 (조금 넉넉하게). full 이면 화면에 보이는 전체 영역
+  // 화면은 object-fit: cover + 디지털 줌(scale) 이므로 그 역변환으로 원본 좌표를 구함
   var cropCanvas = document.createElement("canvas");
   function grab(video, full) {
-    var w = video.videoWidth, h = video.videoHeight;
-    var bandH = full ? h : Math.round(h * 0.4);
-    cropCanvas.width = w; cropCanvas.height = bandH;
-    cropCanvas.getContext("2d", { willReadFrequently: true }).drawImage(video, 0, (h - bandH) / 2, w, bandH, 0, 0, w, bandH);
+    var vw = video.videoWidth, vh = video.videoHeight;
+    var box = video.parentElement.getBoundingClientRect();
+    var guide = video.parentElement.querySelector(".vf-frame");
+    var s = Math.max(box.width / vw, box.height / vh) * (cam.digitalZoom || 1);
+    var ox = (box.width - vw * s) / 2, oy = (box.height - vh * s) / 2;
+    var gx, gy, gw, gh;
+    if (guide && !full) {
+      var g = guide.getBoundingClientRect();
+      var mx = g.width * 0.12, my = g.height * 0.6;
+      gx = g.left - box.left - mx; gy = g.top - box.top - my; gw = g.width + 2 * mx; gh = g.height + 2 * my;
+    } else {
+      gx = 0; gy = 0; gw = box.width; gh = box.height;
+    }
+    var sx = Math.max(0, (gx - ox) / s), sy = Math.max(0, (gy - oy) / s);
+    var sw = Math.min(vw - sx, gw / s), sh = Math.min(vh - sy, gh / s);
+    var up = sw < 800 ? 800 / sw : 1;   // 너무 작으면 키워서 넘김 (가는 막대가 뭉개지지 않게)
+    cropCanvas.width = Math.round(sw * up); cropCanvas.height = Math.round(sh * up);
+    var ctx = cropCanvas.getContext("2d", { willReadFrequently: true });
+    ctx.imageSmoothingEnabled = up > 1;
+    ctx.drawImage(video, sx, sy, sw, sh, 0, 0, cropCanvas.width, cropCanvas.height);
     return cropCanvas;
+  }
+
+  // 줌: 렌즈 줌을 지원하면 카메라 줌, 아니면 화면 확대(디지털)
+  function applyZoom(video) {
+    var track = cam.stream && cam.stream.getVideoTracks()[0];
+    var z = cam.zoom, zc = cam.caps.zoom;
+    cam.hwZoom = false; cam.digitalZoom = z;
+    if (track && zc && zc.max >= 1.5) {
+      var hz = Math.max(zc.min || 1, Math.min(z, zc.max));
+      track.applyConstraints({ advanced: [{ zoom: hz }] }).catch(function () { /* 무시 */ });
+      cam.hwZoom = true; cam.digitalZoom = z / hz;
+    }
+    if (video) video.style.transform = cam.digitalZoom > 1 ? "scale(" + cam.digitalZoom + ")" : "";
+    if ($("zoomBtn")) $("zoomBtn").textContent = z + "x";
+  }
+  function cycleZoom() {
+    cam.zoom = ZOOMS[(ZOOMS.indexOf(cam.zoom) + 1) % ZOOMS.length];
+    store.set("zoom", cam.zoom);
+    applyZoom($("camVideo"));
+  }
+
+  // 화면을 누르면 그 위치에 초점 (안드로이드 크롬). 아이폰은 초점 지정 기능이 없어 다시 맞추기만 요청
+  function tapFocus(ev) {
+    var video = $("camVideo");
+    if (!cam.stream || !video) return;
+    var box = video.parentElement.getBoundingClientRect();
+    var x = ev.clientX - box.left, y = ev.clientY - box.top;
+    var ring = document.createElement("span");
+    ring.className = "focus-ring"; ring.style.left = x + "px"; ring.style.top = y + "px";
+    video.parentElement.appendChild(ring);
+    setTimeout(function () { ring.remove(); }, 900);
+    var track = cam.stream.getVideoTracks()[0], fm = cam.caps.focusMode || [];
+    var vw = video.videoWidth, vh = video.videoHeight;
+    var sc = Math.max(box.width / vw, box.height / vh) * (cam.digitalZoom || 1);
+    var nx = Math.min(1, Math.max(0, ((x - (box.width - vw * sc) / 2) / sc) / vw));
+    var ny = Math.min(1, Math.max(0, ((y - (box.height - vh * sc) / 2) / sc) / vh));
+    var single = fm.indexOf("single-shot") >= 0 ? "single-shot" : fm.indexOf("manual") >= 0 ? null : null;
+    var c = [];
+    if (cam.caps.pointsOfInterest !== undefined) c.push({ pointsOfInterest: [{ x: nx, y: ny }] });
+    if (single) c.push({ focusMode: single });
+    else if (fm.indexOf("continuous") >= 0) c.push({ focusMode: "continuous" });
+    if (!c.length) return;
+    track.applyConstraints({ advanced: c }).then(function () {
+      if (single && fm.indexOf("continuous") >= 0) setTimeout(function () {
+        if (cam.stream) track.applyConstraints({ advanced: [{ focusMode: "continuous" }] }).catch(function () {});
+      }, 2500);
+    }).catch(function () { /* 지원 안 함 */ });
   }
   async function syncCamera() {
     if (!cameraWanted()) { stopCamera(); return; }
@@ -340,11 +407,13 @@
       var track = stream.getVideoTracks()[0];
       try {
         var caps = track.getCapabilities ? track.getCapabilities() : {};
+        cam.caps = caps;
         if (caps.focusMode && caps.focusMode.indexOf("continuous") >= 0) await track.applyConstraints({ advanced: [{ focusMode: "continuous" }] });
         cam.torchOk = !!caps.torch;
       } catch (e) { /* 초점·플래시 설정을 지원하지 않는 폰 */ }
       video.srcObject = stream;
       await video.play();
+      applyZoom(video);
       if (cam.torchOk && $("torchBtn")) $("torchBtn").hidden = false;
       var det = await detP;
       cam.engine = det.name;
@@ -387,9 +456,9 @@
     var vf;
     if (state.mode === "camera" && store.get("camera", true)) {
       vf = '<div class="viewfinder" role="img" aria-label="카메라 스캔 화면"><video id="camVideo" playsinline muted autoplay></video>' + mode +
-        '<button class="torch" id="torchBtn" hidden aria-label="플래시">플래시</button>' +
+        '<div class="vf-tools"><button class="vf-tool" id="torchBtn" hidden aria-label="플래시">플래시</button><button class="vf-tool" id="zoomBtn" aria-label="줌">' + cam.zoom + 'x</button></div>' +
         (cam.error ? '<div class="vf-off"><div>' + esc(cam.error) + '<br><button data-cam-retry>다시 시도</button></div></div>'
-          : '<div class="vf-frame"><span></span><span></span><span></span><span></span></div><div class="vf-line"></div><div class="vf-caption">바코드를 가로로 맞추면 계속 읽습니다</div>') +
+          : '<div class="vf-frame"><span></span><span></span><span></span><span></span></div><div class="vf-line"></div><div class="vf-caption">바코드를 가이드 크기에 맞추세요 · 눌러서 초점</div>') +
         '</div>';
     } else {
       vf = '<div class="viewfinder bt"><div class="bt-line"><span class="dot"></span>스캐너로 바로 스캔하세요</div>' + mode + '</div>';
@@ -899,6 +968,7 @@
 
   // ---------- 이벤트 ----------
   document.addEventListener("click", function (e) {
+    if (e.target.closest(".viewfinder") && !e.target.closest("button")) { tapFocus(e); return; }
     var el = e.target.closest("button, [data-close]");
     if (!el || el.disabled) return;
     if (el.hasAttribute("data-tab")) {
@@ -913,6 +983,7 @@
     if (el.hasAttribute("data-mode")) { state.mode = el.getAttribute("data-mode"); store.set("mode", state.mode); cam.error = null; renderScanner(); return; }
     if (el.hasAttribute("data-cam-retry")) { cam.error = null; renderScanner(); return; }
     if (el.id === "torchBtn") { toggleTorch(); return; }
+    if (el.id === "zoomBtn") { cycleZoom(); return; }
     if (el.hasAttribute("data-go")) {
       var code = el.getAttribute("data-go");
       state.result.push({ type: isLoc(code) ? "loc" : "part", code: code });
