@@ -316,7 +316,8 @@ button.row:active, .row-btn:active { background: var(--fill); }
 .movebar .mb-text { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .movebar b { font-weight: 600; font-variant-numeric: tabular-nums; }
 .movebar .mb-more { flex: none; opacity: .75; }
-.movebar[hidden], .toast[hidden], .badge[hidden] { display: none; }
+/* hidden 속성은 항상 숨김 (display 를 지정한 버튼·배지도) */
+[hidden] { display: none !important; }
 .app:has(.movebar:not([hidden])) .toast { top: calc(88px + env(safe-area-inset-top, 0px)); }
 
 /* 재고조사 보고서 미리보기 (시트는 report.js 의 A4 양식) */
@@ -333,3 +334,4 @@ button.row:active, .row-btn:active { background: var(--fill); }
 .rv-name span { color: var(--label2); }
 .rv-state { margin: 8px 2px 0; font-size: 13px; color: var(--label2); }
 .rv-state.err { color: var(--danger); }
+.rv-chrome { display: flex; align-items: center; justify-content: center; margin-top: 8px; text-decoration: none; }
