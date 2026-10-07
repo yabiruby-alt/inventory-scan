@@ -392,6 +392,8 @@ function check(name, ok, extra) { results.push((ok ? 'PASS ' : 'FAIL ') + name +
   check('확인 창에 품번 크게', (await page.$eval('#sheet .sheet-pn', e => e.textContent + ' ' + getComputedStyle(e).fontSize)) === 'PN10002 24px');
   if (process.env.SHOTS) await page.screenshot({ path: path.join(process.env.SHOTS, 'audit_sheet.png') });
   // ===== 재고 확인 창: 지금 DMS 재고 조회 (조사 시작 뒤 출고) =====
+  const syncTxt = await page.textContent('#aNow');
+  check('창을 열자마자 최근 DMS 값으로 비교 (기다림 없음)', syncTxt.includes('최근 DMS3') && syncTxt.includes('바뀌지 않았습니다'), syncTxt);
   await page.unroute(SB + '/rest/v1/inv_status*');   // 데몬 응답 중으로
   await page.click('#aNowBtn');
   await page.waitForSelector('#aUseNow', { timeout: 5000 });
@@ -401,6 +403,9 @@ function check(name, ok, extra) { results.push((ok ? 'PASS ' : 'FAIL ') + name +
   await page.click('#aUseNow');
   check('지금 수량으로 실사 입력 + 메모', (await page.inputValue('#aCountIn')) === '1' && (await page.inputValue('#aMemoIn')).includes('출고 2개'), await page.inputValue('#aMemoIn'));
   if (process.env.SHOTS) await page.screenshot({ path: path.join(process.env.SHOTS, 'audit_now.png') });
+  const mvList = await page.$eval('[data-aitem="PN10002"]', e => e.textContent);
+  check('목록에 조사 시작 뒤 변동 표시', mvList.includes('조사 시작 뒤 −2 (지금 1)'), mvList);
+  check('현재고 조회는 RDC 없이 (빠르게)', !reqPosts.some(r => r.kind === 'stock' && r.item_cd === 'PN10002' && r.params && r.params.rdc));
   check('RR 이 없는 부품도 확인 창에 RR 0 표시', qs0 === 'BMW3RR0' && !(await page.textContent('#sheet')).includes('아직 올라오지 않아'), qs0);
   await page.click('[data-close]');
   await page.click('[data-tab="log"]');

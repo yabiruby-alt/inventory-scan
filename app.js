@@ -15,7 +15,7 @@
   var SCAN_COOLDOWN_MS = 3000;        // 같은 바코드는 3초 동안 다시 읽지 않음
   var STATUS_POLL_MS = 60000;         // 데몬 상태·재고 갱신 확인 주기
   var DAEMON_STALE_MS = 3 * 60000;    // 데몬 응답이 이보다 오래되면 경고
-  var REQ_POLL_MS = 1500;             // 요청 처리 결과 확인 주기
+  var REQ_POLL_MS = 700;              // 요청 처리 결과 확인 주기
   var REQ_GIVEUP_MS = 10 * 60000;     // 이만큼 기다려도 데몬이 안 가져가면 요청 취소 (데몬도 10분 지난 요청은 버림)
   var APP_VER = ((document.currentScript && document.currentScript.src || "").match(/[?&]v=(\d+)/) || [])[1];
   var GROUPS ={ A: "상시재고", L: "로컬조달", O: "특수/단종계열", I: "비이동성", S: "특수발주" };
@@ -978,10 +978,25 @@
         (it.status === "ok" ? '<span class="pill ok">일치</span>'
         : it.status === "diff" ? '<span class="pill warn">실사 ' + qtyNum(it.counted) + '</span>' : '');
       html += '<button class="row' + (it.status ? " done" : "") + '" data-aitem="' + esc(it.item_cd) + '"' + (started ? '' : ' disabled') + '>' +
-        '<div class="row-main"><div class="pn">' + esc(it.item_cd) + '</div><div class="row-sub">' + esc(it.item_nm) + (it.checked_by_name ? ' · ' + esc(it.checked_by_name) : '') + '</div>' + splitNote(it.qty, itemRr(it)) + '</div>' +
+        '<div class="row-main"><div class="pn">' + esc(it.item_cd) + '</div><div class="row-sub">' + esc(it.item_nm) + (it.checked_by_name ? ' · ' + esc(it.checked_by_name) : '') + '</div>' + splitNote(it.qty, itemRr(it)) + movedNote(it) + '</div>' +
         '<div class="qty">' + qtyNum(itemTotal(it)) + '<small>EA</small></div>' + mark + '</button>';
     });
     return html + '</div>';
+  }
+
+  // 조사 시작 때 수량과 최근 DMS 현재고(10분마다 갱신) 차이 — 시작 뒤 출고·입고 (기다림 없이 바로)
+  function syncNow(it) {
+    if (!Object.keys(state.parts).length) return null;
+    var p = state.parts[it.item_cd];
+    return { bmw: p ? Number(p.crt_qty) || 0 : 0, lct: p ? p.lct_cd : null };
+  }
+  function movedSince(it) {
+    var n = syncNow(it);
+    return n ? n.bmw + (itemRrKnown(it) ? rrQty(it.item_cd) : 0) - itemTotal(it) : 0;
+  }
+  function movedNote(it) {
+    var d = movedSince(it);
+    return d ? '<div class="row-sub warn-text">조사 시작 뒤 ' + (d > 0 ? '+' : '−') + qtyNum(Math.abs(d)) + ' (지금 ' + qtyNum(itemTotal(it) + d) + ')</div>' : '';
   }
 
   function viewAuditList() {
@@ -1051,8 +1066,9 @@
       '<div class="bigqty"><span>BMW + RR 합계</span><b>' + qtyNum(itemTotal(it)) + '</b><small>EA</small></div>' +
       '<div class="qsplit"><div><span>BMW</span><b>' + qtyNum(it.qty) + '</b></div><div><span>RR</span><b>' + (itemRrKnown(it) ? qtyNum(itemRr(it)) : "-") + '</b></div></div>' +
       (itemRrKnown(it) ? '' : '<div class="notice">RR 재고가 아직 올라오지 않아 BMW 수량만 합계에 들어 있습니다. DMS 연결 PC(데몬)를 확인하세요.</div>') +
-      '<div class="nowbox" id="aNow" data-pn="' + esc(pn) + '"><button class="btn-secondary" id="aNowBtn">현재 DMS 재고 조회</button>' +
-        '<div class="nowbox-hint">조사 시작 뒤 출고·입고로 바뀌었는지 확인</div></div>' + prev +
+      '<div class="nowbox" id="aNow" data-pn="' + esc(pn) + '">' + (syncNow(it)
+        ? auditNowHtml(it, syncNow(it).bmw, syncNow(it).lct, '최근 DMS', basis() + ' 기준')
+        : '<button class="btn-secondary" id="aNowBtn">현재 DMS 재고 조회</button><div class="nowbox-hint">조사 시작 뒤 출고·입고로 바뀌었는지 확인</div>') + '</div>' + prev +
       '<button class="btn-primary" id="aOk" data-pn="' + esc(pn) + '">일치</button>' +
       '<button class="btn-ghost" id="aDiffToggle">수량 다름</button>' +
       '<div id="aDiffBox" hidden>' +
@@ -1078,20 +1094,22 @@
           if (p.lct_cd !== r.lct_cd) { locRemove(p.lct_cd, pn); locAdd(r.lct_cd, pn); }
           p.crt_qty = r.crt_qty; p.lct_cd = r.lct_cd;
         }
-        b.innerHTML = auditNowHtml(findAuditItem(pn), r.found ? Number(r.crt_qty) : 0, r.lct_cd);
+        b.innerHTML = auditNowHtml(findAuditItem(pn), r.found ? Number(r.crt_qty) : 0, r.lct_cd, '지금 DMS', hhmm(new Date().toISOString()) + ' 조회');
+        if (state.tab === "audit") render(false);   // 목록의 '조사 시작 뒤' 표시도 새 값으로
       });
     } catch (e) {
-      btn.disabled = false; btn.textContent = "현재 DMS 재고 조회";
+      btn.disabled = false; btn.textContent = "↻ 지금 DMS에서 다시 조회";
       toast("조회하지 못했습니다: " + e.message);
     }
   }
-  function auditNowHtml(it, bmwNow, lctNow) {
+  function auditNowHtml(it, bmwNow, lctNow, label, when) {
     var rrNow = itemRrKnown(it) ? rrQty(it.item_cd) : 0, totNow = bmwNow + rrNow, d = totNow - itemTotal(it);
     var msg = !d ? '<div class="nowbox-msg ok">조사 시작 뒤 바뀌지 않았습니다</div>'
       : '<div class="nowbox-msg warn">조사 시작 뒤 <b>' + qtyNum(Math.abs(d)) + '개 ' + (d < 0 ? '줄었습니다' : '늘었습니다') + '</b> (' + (d < 0 ? '출고' : '입고') + ' 등)</div>' +
         '<button class="btn-inline" id="aUseNow" data-qty="' + qtyNum(totNow) + '" data-d="' + qtyNum(d) + '">지금 수량 ' + qtyNum(totNow) + '개로 실사 입력 ›</button>';
-    return '<div class="nowbox-row"><span>지금 DMS</span><b>' + qtyNum(totNow) + '</b><small>EA</small></div>' +
-      '<div class="nowbox-sub">BMW ' + qtyNum(bmwNow) + ' · RR ' + qtyNum(rrNow) + (lctNow && lctNow !== it.lct_cd ? ' · 위치 ' + esc(lctNow) : '') + ' · ' + hhmm(new Date().toISOString()) + ' 조회</div>' + msg;
+    return '<div class="nowbox-row"><span>' + label + '</span><b>' + qtyNum(totNow) + '</b><small>EA</small></div>' +
+      '<div class="nowbox-sub">BMW ' + qtyNum(bmwNow) + ' · RR ' + qtyNum(rrNow) + (lctNow && lctNow !== it.lct_cd ? ' · 위치 ' + esc(lctNow) : '') + ' · ' + when + '</div>' + msg +
+      '<button class="btn-inline nowbox-again" id="aNowBtn">↻ 지금 DMS에서 다시 조회</button>';
   }
 
   async function markAudit(pn, status, counted, memo) {
@@ -1849,7 +1867,7 @@
             locAdd(r.lct_cd, pn);
           }
           p.crt_qty = r.crt_qty; p.lct_cd = r.lct_cd;
-          state.rdc[pn] = { status: "done", result: r, at: Date.now() };
+          if (r.rdc_qty != null) state.rdc[pn] = { status: "done", result: r, at: Date.now() };
         }
         toast("현재고 " + qtyNum(r.crt_qty) + "개 · 위치 " + (r.lct_cd || "없음"));
         if (state.tab === "scan") render(false);
@@ -1860,7 +1878,7 @@
   async function lookupUnknown(pn, btn) {
     btn.disabled = true; btn.textContent = "DMS에서 조회 중…";
     try {
-      var id = await sendRequest("stock", pn);
+      var id = await sendRequest("stock", pn, { rdc: true });
       waitRequest(id, function (res) {
         if (!$("unknownResult")) return;
         btn.hidden = true;
