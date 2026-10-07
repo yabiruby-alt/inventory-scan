@@ -698,9 +698,40 @@
     var m = state.moves[pn];
     if (!m) return "";
     if (m.status === "pending") return '<div class="banner info"><span class="spin" aria-hidden="true"></span>DMS 반영 중 · ' + esc(m.from || "공란") + ' → ' + esc(m.to) + '</div>';
+    if (m.status === "failed") m.seen = true;   // 부품 화면에서 봤으면 위쪽 띠는 내림
     if (m.status === "failed") return '<div class="banner">위치 변경 실패 · ' + esc(m.error || "") + '</div>';
     return '<div class="banner ok">DMS 반영 완료 · ' + esc(m.from || "공란") + ' → ' + esc(m.to) + ' · ' + m.time + '</div>';
   }
+
+  // 화면 위 띠: 위치 변경이 진행 중이면 어느 탭에서든 보이고, 끝나면 완료(잠시)·실패(누를 때까지) 표시
+  var MOVE_DONE_SHOW_MS = 6000, moveBarTimer = null, moveBarPn = null;
+  function renderMoveBar() {
+    var bar = $("moveBar"), now = Date.now();
+    var list = Object.keys(state.moves).map(function (k) { return Object.assign({ pn: k }, state.moves[k]); })
+      .filter(function (m) { return m.status === "pending" || m.status === "failed" && !m.seen || m.status === "done" && now - m.at < MOVE_DONE_SHOW_MS; });
+    clearTimeout(moveBarTimer);
+    if (!state.user || !list.length) { bar.hidden = true; moveBarPn = null; return; }
+    var pending = list.filter(function (m) { return m.status === "pending"; });
+    var failed = list.filter(function (m) { return m.status === "failed"; });
+    var m = pending[0] || failed[0] || list[0];
+    var route = ' <b class="mono-loc">' + esc(m.from || "공란") + ' → ' + esc(m.to) + '</b>';
+    var text = m.status === "pending" ? '<span class="spin" aria-hidden="true"></span><span class="mb-text">위치 변경 중 · <b>' + esc(m.pn) + '</b>' + route + '</span>'
+      : m.status === "failed" ? '<span class="mb-text">위치 변경 실패 · <b>' + esc(m.pn) + '</b> ' + esc(m.error || "") + '</span>'
+      : '<span class="mb-text">DMS 반영 완료 · <b>' + esc(m.pn) + '</b>' + route + '</span>';
+    var more = pending.length > 1 ? '<span class="mb-more">외 ' + (pending.length - 1) + '건</span>' : '';
+    bar.className = "movebar" + (m.status === "failed" ? " err" : m.status === "done" ? " ok" : "");
+    bar.innerHTML = text + more;
+    bar.hidden = false;
+    moveBarPn = m.pn;
+    if (!pending.length && !failed.length) moveBarTimer = setTimeout(renderMoveBar, MOVE_DONE_SHOW_MS - (now - m.at) + 50);
+  }
+  $("moveBar").addEventListener("click", function () {
+    var pn = moveBarPn, m = pn && state.moves[pn];
+    if (!m) return;
+    if (m.status === "failed") m.seen = true;
+    if (state.parts[pn]) { closeSheet(); state.tab = "scan"; state.result = [{ type: "part", code: pn }]; render(true); }
+    else renderMoveBar();
+  });
 
   function viewPart(pn) {
     var p = state.parts[pn];
@@ -1012,6 +1043,9 @@
   }
 
   function render(resetScroll) {
+    try { renderView(resetScroll); } finally { renderMoveBar(); }
+  }
+  function renderView(resetScroll) {
     var nav = $("nav"), content = $("content");
     if (!state.user) {
       showScanner(false); $("tabbar").hidden = true; nav.innerHTML = "";
@@ -1239,20 +1273,18 @@
     $("saveMove").disabled = true;
     try {
       var id = await sendRequest("loc_change", pn, { from: from, to: to });
-      state.moves[pn] = { from: from, to: to, status: "pending", reqId: id };
+      state.moves[pn] = { from: from, to: to, status: "pending", reqId: id, at: Date.now() };
       closeSheet(); render(false);
       waitRequest(id, function (res) {
         if (res.status === "done") {
-          state.moves[pn] = { from: from, to: to, status: "done", time: hhmm() };
+          state.moves[pn] = { from: from, to: to, status: "done", time: hhmm(), at: Date.now() };
           var p = state.parts[pn];
           if (p.lct_cd && state.locs[p.lct_cd]) state.locs[p.lct_cd] = state.locs[p.lct_cd].filter(function (k) { return k !== pn; });
           p.lct_cd = to; (state.locs[to] = state.locs[to] || []).push(pn);
-          toast("DMS 반영 완료: " + (from || "공란") + " → " + to);
         } else {
-          state.moves[pn] = { from: from, to: to, status: "failed", error: res.error };
-          toast("위치 변경 실패: " + (res.error || ""));
+          state.moves[pn] = { from: from, to: to, status: "failed", error: res.error, at: Date.now() };
         }
-        if (state.tab === "scan") render(false);
+        if (state.tab === "scan" && $("sheet").hidden) render(false); else renderMoveBar();
       });
     } catch (e) {
       toast("요청하지 못했습니다: " + e.message);

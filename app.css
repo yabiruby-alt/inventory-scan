@@ -308,3 +308,12 @@ button.row:active, .row-btn:active { background: var(--fill); }
 .toast { top: calc(50px + env(safe-area-inset-top, 0px)); bottom: auto; left: 50%; right: auto; transform: translateX(-50%); width: max-content; max-width: calc(100% - 32px); pointer-events: auto; }
 .toast div { font-size: 13px; padding: 7px 12px; border-radius: 16px; background: rgba(28,28,30,.86); line-height: 1.35; }
 .toast.err div { background: var(--danger); }
+/* 위치 변경 진행 표시 (모든 탭 상단) */
+.movebar { flex: none; display: flex; align-items: center; gap: 8px; width: 100%; min-height: 34px; padding: 6px 16px; font-size: 13px; font-weight: 500; text-align: left; background: var(--accent-soft); color: var(--accent); z-index: 4; }
+.movebar.ok { background: var(--fill); color: var(--ok); }
+.movebar.err { background: rgba(215,0,21,.10); color: var(--danger); }
+.movebar .mb-text { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.movebar b { font-weight: 600; font-variant-numeric: tabular-nums; }
+.movebar .mb-more { flex: none; opacity: .75; }
+.movebar[hidden], .toast[hidden] { display: none; }
+.app:has(.movebar:not([hidden])) .toast { top: calc(88px + env(safe-area-inset-top, 0px)); }
