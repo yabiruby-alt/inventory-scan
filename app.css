@@ -268,7 +268,9 @@ button.row:active, .row-btn:active { background: var(--fill); }
 .loc-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; margin: 22px 4px 8px; }
 .loc-head .mono-loc { font-size: var(--fs-xl); font-weight: 700; color: var(--label); }
 .loc-head span:last-child { font-size: var(--fs-sm); color: var(--label2); }
-.sheet-loc { text-align: center; font-size: var(--fs-2xl); font-weight: 700; margin: 2px 0 2px; }
+.sheet-loc { text-align: center; font-size: var(--fs-xl); font-weight: 700; color: var(--accent); margin: 2px 0 0; }
+/* 확인 창의 품번: 위치와 함께 가장 중요한 정보라 크게 */
+.sheet-pn { text-align: center; font-family: var(--mono); font-size: var(--fs-2xl); font-weight: 700; letter-spacing: 0.02em; color: var(--label); margin: 2px 0 2px; word-break: break-all; }
 .loc-btn { margin-top: 10px; align-self: flex-start; display: inline-flex; align-items: baseline; gap: 6px; padding: 6px 12px; border-radius: 10px; background: var(--accent-soft); color: var(--accent); font-size: var(--fs-md); }
 .loc-btn b { font-size: var(--fs-xl); font-weight: 700; }
 

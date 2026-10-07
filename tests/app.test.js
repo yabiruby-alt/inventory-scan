@@ -387,6 +387,8 @@ function check(name, ok, extra) { results.push((ok ? 'PASS ' : 'FAIL ') + name +
   check('수량 다름 체크에 RR 수량도 저장', ck && ck.dms_qty === 1 && ck.rr_qty === 4 && ck.counted_qty === 3, JSON.stringify(ck));
   await page.click('[data-aitem="PN10002"]');
   const qs0 = await page.$eval('#sheet .qsplit', e => e.textContent);
+  check('확인 창에 품번 크게', (await page.$eval('#sheet .sheet-pn', e => e.textContent + ' ' + getComputedStyle(e).fontSize)) === 'PN10002 24px');
+  if (process.env.SHOTS) await page.screenshot({ path: path.join(process.env.SHOTS, 'audit_sheet.png') });
   check('RR 이 없는 부품도 확인 창에 RR 0 표시', qs0 === 'BMW3RR0' && !(await page.textContent('#sheet')).includes('아직 올라오지 않아'), qs0);
   await page.click('[data-close]');
   await page.click('[data-tab="log"]');

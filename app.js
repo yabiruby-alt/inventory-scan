@@ -1046,7 +1046,8 @@
     openSheet(
       '<div class="sheet-head"><button class="cancel" data-close>닫기</button><h2>재고 확인</h2><span></span></div>' +
       '<div class="sheet-loc mono-loc">' + esc(it.lct_cd || "위치 없음") + '</div>' +
-      '<p class="sheet-sub"><span class="pn">' + esc(pn) + '</span><br>' + esc(it.item_nm) + '</p>' +
+      '<div class="sheet-pn">' + esc(pn) + '</div>' +
+      '<p class="sheet-sub">' + esc(it.item_nm) + '</p>' +
       '<div class="bigqty"><span>BMW + RR 합계</span><b>' + qtyNum(itemTotal(it)) + '</b><small>EA</small></div>' +
       '<div class="qsplit"><div><span>BMW</span><b>' + qtyNum(it.qty) + '</b></div><div><span>RR</span><b>' + (itemRrKnown(it) ? qtyNum(itemRr(it)) : "-") + '</b></div></div>' +
       (itemRrKnown(it) ? '' : '<div class="notice">RR 재고가 아직 올라오지 않아 BMW 수량만 합계에 들어 있습니다. DMS 연결 PC(데몬)를 확인하세요.</div>') + prev +
@@ -1586,7 +1587,8 @@
     openSheet(
       '<div class="sheet-head"><button class="cancel" data-close>취소</button><h2>수량 다름 체크</h2><span></span></div>' +
       '<div class="sheet-loc mono-loc">' + esc(p.lct_cd || "위치 없음") + '</div>' +
-      '<p class="sheet-sub"><span class="pn">' + esc(pn) + '</span><br>' + esc(p.item_nm) + '</p>' +
+      '<div class="sheet-pn">' + esc(pn) + '</div>' +
+      '<p class="sheet-sub">' + esc(p.item_nm) + '</p>' +
       '<div class="group">' +
         '<div class="row"><div class="row-main">DMS 수량</div><span class="row-value qty" style="font-size:var(--fs-xl)">' + qtyNum(p.crt_qty) + '</span></div>' +
         (rr ? '<div class="row"><div class="row-main">RR 수량</div><span class="row-value qty" style="font-size:var(--fs-xl)">' + qtyNum(rr) + '</span></div>' +
