@@ -315,5 +315,5 @@ button.row:active, .row-btn:active { background: var(--fill); }
 .movebar .mb-text { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .movebar b { font-weight: 600; font-variant-numeric: tabular-nums; }
 .movebar .mb-more { flex: none; opacity: .75; }
-.movebar[hidden], .toast[hidden] { display: none; }
+.movebar[hidden], .toast[hidden], .badge[hidden] { display: none; }
 .app:has(.movebar:not([hidden])) .toast { top: calc(88px + env(safe-area-inset-top, 0px)); }

@@ -5,7 +5,7 @@
 //   npm pack @supabase/supabase-js@2.117.2 && tar xzf supabase-supabase-js-2.117.2.tgz -C tests/vendor
 //     → tests/vendor/package/dist/umd/supabase.js (index.html 의 CDN 버전과 같게)
 // 실행:  node tests/app.test.js
-//   환경 변수로 바꿀 수 있음: SUPABASE_JS (supabase.js 경로), CHROMIUM (브라우저 실행 파일)
+//   환경 변수로 바꿀 수 있음: SUPABASE_JS (supabase.js 경로), CHROMIUM (브라우저 실행 파일), SHOTS (화면 캡처 저장 폴더)
 const http = require('http'), fs = require('fs'), path = require('path');
 let chromium;
 try { ({ chromium } = require('playwright')); } catch (e) { ({ chromium } = require('/opt/node-tools/node_modules/playwright')); }
@@ -29,7 +29,7 @@ function check(name, ok, extra) { results.push((ok ? 'PASS ' : 'FAIL ') + name +
   if (!fs.existsSync(SBJS)) throw new Error('supabase.js 가 없습니다: ' + SBJS + ' (파일 위 준비 참고)');
   await new Promise(r => server.listen(PORT, r));
   const browser = await chromium.launch(process.env.CHROMIUM ? { executablePath: process.env.CHROMIUM } : {});
-  const ctx = await browser.newContext();
+  const ctx = await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 2 });
   const page = await ctx.newPage();
   const logs = [];
   page.on('console', m => logs.push(m.type() + ': ' + m.text()));
@@ -52,6 +52,11 @@ function check(name, ok, extra) { results.push((ok ? 'PASS ' : 'FAIL ') + name +
   ];
   let checks = [], nextCheckId = 1;
   let failAuditPatch = false;
+  const moveReqs = [
+    { id: 3, item_cd: 'PN10002', params: { from: 'A140112', to: 'B000001' }, status: 'done', result: { from: 'A140112', to: 'B000001' }, error: null, requested_by_name: '김철수', requested_at: iso(now - 60000) },
+    { id: 2, item_cd: 'PN10003', params: { from: 'A140112', to: 'C000001' }, status: 'failed', result: null, error: 'DMS 저장 실패', requested_by_name: '이영희', requested_at: iso(now - 120000) },
+    { id: 1, item_cd: 'XX99999', params: { from: '', to: 'D000001' }, status: 'cancelled', result: null, error: '응답이 없어 취소했습니다', requested_by_name: '김철수', requested_at: iso(now - 86400000 * 2) },
+  ];
   const reqLog = [];
 
   await page.route('https://cdn.jsdelivr.net/npm/@supabase/**', r => r.fulfill({ path: SBJS, contentType: 'text/javascript' }));
@@ -80,6 +85,7 @@ function check(name, ok, extra) { results.push((ok ? 'PASS ' : 'FAIL ') + name +
         return json(it);   // .single() → object
       }
     }
+    if (t === 'inv_requests' && m === 'GET') return json(moveReqs);
     if (t === 'inv_checks') {
       if (m === 'GET') {
         let rows = checks.filter(c => !c.cleared_at);
@@ -186,6 +192,36 @@ function check(name, ok, extra) { results.push((ok ? 'PASS ' : 'FAIL ') + name +
   await page.clock.fastForward(61000); await page.waitForTimeout(500);
   const n2 = await page.textContent('#daemonNotice');
   check('데몬 멈추면 스캔 화면 안내가 바로 나타남', n1 === '' && n2.includes('응답하지 않습니다'), JSON.stringify([n1, n2.slice(0, 30)]));
+
+  check('체크 기록 0건이면 배지 숨김', !(await page.isVisible('#badge')));
+
+  // ===== 위치 변경 이력 화면 =====
+  await page.click('[data-tab="settings"]');
+  await page.click('#movesOpen');
+  await page.waitForSelector('#moveList .diff');
+  const mv = await page.$$eval('#moveList .diff', e => e.map(x => x.textContent));
+  check('이력 3건 표시 (경로·상태)', mv.length === 3 && mv[0].includes('A140112 → B000001') && mv[0].includes('완료') && mv[1].includes('실패') && mv[2].includes('공란 → D000001') && mv[2].includes('취소'), JSON.stringify(mv));
+  if (process.env.SHOTS) await page.screenshot({ path: path.join(process.env.SHOTS, 'moves.png') });
+  const days = await page.$$eval('#moveList .section-label', e => e.length);
+  check('날짜별로 묶음', days === 2, 'days=' + days);
+  await page.click('[data-mfilter="problem"]');
+  const prob = await page.$$eval('#moveList .diff', e => e.length);
+  check('실패·취소만 보기', prob === 2, 'n=' + prob);
+  await page.click('[data-mfilter="all"]');
+  await page.fill('#moveSearch', 'c000');
+  const srch = await page.$$eval('#moveList .diff', e => e.map(x => x.textContent));
+  check('위치로 찾기', srch.length === 1 && srch[0].includes('C000001'), JSON.stringify(srch));
+  await page.fill('#moveSearch', '');
+  await page.click('[data-open="PN10002"]');
+  await page.waitForSelector('[data-movelog="PN10002"]');
+  check('이력에서 누르면 부품 화면', await page.isVisible('[data-movelog="PN10002"]'));
+  await page.click('[data-movelog="PN10002"]');
+  await page.waitForSelector('#moveList .diff');
+  const one = await page.$$eval('#moveList .diff', e => e.length);
+  const sv = await page.inputValue('#moveSearch');
+  check('부품 화면에서 그 부품 이력만', one === 1 && sv === 'PN10002', 'n=' + one + ' q=' + sv);
+  await page.click('#movesBack');
+  check('돌아가기 → 부품 화면', await page.isVisible('[data-movelog="PN10002"]'));
 
   console.log(results.join('\n'));
   const errs = logs.filter(l => l.startsWith('PAGEERROR'));

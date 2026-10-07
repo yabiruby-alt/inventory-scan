@@ -50,6 +50,10 @@
     auditItems: [],        // 열려 있는 조사의 항목
     auditFilter: "left",
     auditLoc: null,
+    moveLog: null,         // 위치 변경 이력 {rows} | {error}
+    moveQ: "",             // 이력 검색어
+    moveFilter: "all",     // all | done | problem
+    movesBack: "settings", // 이력 화면에서 돌아갈 곳 (settings | scan)
     loading: true
   };
 
@@ -200,6 +204,7 @@
       await loadAudits();
     }
     flushOutbox();
+    if (state.tab === "moves") await loadMoveLog();
     render(false);
   }
 
@@ -822,6 +827,7 @@
           : '<button class="row" data-move="' + esc(pn) + '"><div class="row-main row-link">위치 변경</div>' + CHEV + '</button>') +
         '<button class="row" data-check="' + esc(pn) + '"><div class="row-main row-link">' + (c ? "체크 내용 수정" : "수량 다름 체크") + '</div>' + CHEV + '</button>' +
         '<button class="row" data-refresh="' + esc(pn) + '"><div class="row-main row-link">DMS 현재고 다시 조회</div>' + CHEV + '</button>' +
+        '<button class="row" data-movelog="' + esc(pn) + '"><div class="row-main row-link">이 부품 위치 변경 이력</div>' + CHEV + '</button>' +
       '</div>';
   }
 
@@ -1130,6 +1136,67 @@
       '<p class="footnote">DMS 수량은 체크한 시점의 값입니다. 재고를 정정한 뒤 기록을 지우면 목록에서 사라집니다.</p>';
   }
 
+  // ---------- 위치 변경 이력 (앱에서 요청한 위치 변경) ----------
+  var MOVE_PILL = { done: ["ok", "완료"], failed: ["warn", "실패"], cancelled: ["", "취소"], running: ["run", "처리 중"], pending: ["run", "대기"] };
+  async function loadMoveLog() {
+    var r = await sb.from("inv_requests").select("id,item_cd,params,status,result,error,requested_by_name,requested_at,finished_at")
+      .eq("kind", "loc_change").order("requested_at", { ascending: false }).limit(300);
+    state.moveLog = r.error ? { error: r.error.message } : { rows: r.data };
+  }
+  function openMoveLog(back, q) {
+    state.movesBack = back; state.moveQ = q || ""; state.moveFilter = "all";
+    state.tab = "moves"; render(true);
+    loadMoveLog().then(function () { if (state.tab === "moves") render(false); });
+  }
+  function moveRoute(m) {
+    var r = m.status === "done" && m.result ? m.result : m.params || {};
+    return { from: r.from || "", to: r.to || "", unchanged: !!(m.result && m.result.unchanged) };
+  }
+  function moveRows() {
+    var log = state.moveLog;
+    if (!log) return '<div class="loading">이력을 불러오는 중…</div>';
+    if (log.error) return '<div class="empty">이력을 불러오지 못했습니다<br>' + esc(log.error) + '</div>';
+    var q = normCode(state.moveQ);
+    var list = log.rows.filter(function (m) {
+      if (state.moveFilter === "done" && m.status !== "done") return false;
+      if (state.moveFilter === "problem" && m.status !== "failed" && m.status !== "cancelled") return false;
+      if (!q) return true;
+      var rt = moveRoute(m), p = state.parts[m.item_cd];
+      return m.item_cd.indexOf(q) >= 0 || rt.from.indexOf(q) >= 0 || rt.to.indexOf(q) >= 0 ||
+        (p && String(p.item_nm || "").toUpperCase().replace(/\s+/g, "").indexOf(q) >= 0);
+    });
+    if (!list.length) return '<div class="empty">' + (q || state.moveFilter !== "all" ? "조건에 맞는 이력이 없습니다" : "아직 앱에서 위치를 바꾼 기록이 없습니다") + '</div>';
+    var html = "", day = null;
+    list.forEach(function (m) {
+      var d = new Date(m.requested_at), key = (d.getMonth() + 1) + "월 " + d.getDate() + "일";
+      if (key !== day) { if (day !== null) html += '</div>'; day = key; html += '<div class="section-label">' + key + '</div><div class="group">'; }
+      var rt = moveRoute(m), p = state.parts[m.item_cd];
+      var pill = rt.unchanged ? ["", "변경 없음"] : MOVE_PILL[m.status] || ["", m.status];
+      var inner = '<div class="row-main"><div class="pn">' + esc(m.item_cd) + '</div>' +
+        (p ? '<div class="row-sub">' + esc(p.item_nm) + '</div>' : '') +
+        '<div class="row-sub">' + hhmm(m.requested_at) + ' · ' + esc(m.requested_by_name || "") + '</div>' +
+        (m.error ? '<div class="row-sub' + (m.status === "failed" ? ' warn-text' : '') + '" style="white-space:normal">' + esc(m.error) + '</div>' : '') + '</div>' +
+        '<div class="diff"><b class="mono-loc">' + esc(rt.from || "공란") + ' → ' + esc(rt.to) + '</b><span class="pill ' + pill[0] + '">' + pill[1] + '</span></div>';
+      html += p ? '<button class="row" data-open="' + esc(m.item_cd) + '">' + inner + '</button>' : '<div class="row">' + inner + '</div>';
+    });
+    return html + '</div>';
+  }
+  function viewMoves() {
+    var rows = state.moveLog && state.moveLog.rows || [];
+    var n = { all: rows.length, done: 0, problem: 0 };
+    rows.forEach(function (m) { if (m.status === "done") n.done++; else if (m.status === "failed" || m.status === "cancelled") n.problem++; });
+    return '<button class="rback" id="movesBack">' + BACK + (state.movesBack === "scan" ? "부품" : "설정") + '</button>' +
+      '<h1 class="large">위치 변경 이력</h1><p class="meta">이 앱에서 요청한 위치 변경 · 최근 300건</p>' +
+      '<div class="search" style="margin-top:0">' + SEARCH + '<input id="moveSearch" value="' + esc(state.moveQ) + '" placeholder="품번·품명·위치로 찾기" aria-label="이력에서 찾기" autocapitalize="characters"></div>' +
+      '<div class="seg" role="tablist">' +
+        '<button data-mfilter="all" class="' + (state.moveFilter === "all" ? "on" : "") + '">전체 ' + n.all + '</button>' +
+        '<button data-mfilter="done" class="' + (state.moveFilter === "done" ? "on" : "") + '">완료 ' + n.done + '</button>' +
+        '<button data-mfilter="problem" class="' + (state.moveFilter === "problem" ? "on" : "") + '">실패·취소 ' + n.problem + '</button>' +
+      '</div>' +
+      '<div id="moveList">' + moveRows() + '</div>' +
+      '<p class="footnote">DMS 화면에서 직접 바꾼 위치는 나오지 않습니다. 누르면 그 부품을 스캔 화면에서 엽니다.</p>';
+  }
+
   function viewSettings() {
     var s = state.status || {};
     return '<h1 class="large">설정</h1><p class="meta">AS_부산(해운중동) · ' + esc(state.user.branch) + '</p>' +
@@ -1154,6 +1221,8 @@
         '<div class="row"><div class="row-main">DMS 연결 PC</div><span class="row-value">' + (daemonStale() ? '<span style="color:var(--danger)">응답 없음</span>' : '<span class="dot" style="display:inline-block;margin-right:6px"></span>연결됨 · ' + hhmm(s.daemon_seen_at)) + '</span></div>' +
         '<div class="row"><div class="row-main">제외</div><span class="row-value">Z 서비스 코드</span></div>' +
       '</div>' +
+      '<div class="section-label">기록</div>' +
+      '<div class="group"><button class="row" id="movesOpen"><div class="row-main row-link">위치 변경 이력</div>' + CHEV + '</button></div>' +
       '<div class="section-label"></div>' +
       '<div class="group"><button class="row" id="logoutBtn"><div class="row-main row-danger">로그아웃</div></button></div>';
   }
@@ -1195,6 +1264,7 @@
     if (state.tab === "log") html = viewLog();
     else if (state.tab === "recent") html = viewRecent();
     else if (state.tab === "settings") html = viewSettings();
+    else if (state.tab === "moves") html = viewMoves();
     else if (state.tab === "audit") html = viewAudit();
     else html = viewScan();
 
@@ -1207,7 +1277,7 @@
     } else if (state.tab === "audit" && state.auditOpen) {
       nav.innerHTML = '<span></span><span class="nav-title always">' + AUDIT_TITLE[state.auditOpen] + '</span><span class="nav-meta">' + basis() + ' 기준</span>';
     } else {
-      nav.innerHTML = '<span></span><span class="nav-title">' + ({ log: "체크 기록", recent: "최근 스캔", settings: "설정", audit: "재고조사" }[state.tab]) + '</span><span></span>';
+      nav.innerHTML = '<span></span><span class="nav-title">' + ({ log: "체크 기록", recent: "최근 스캔", settings: "설정", audit: "재고조사", moves: "위치 변경 이력" }[state.tab]) + '</span><span></span>';
     }
 
     var top = content.scrollTop;
@@ -1222,7 +1292,8 @@
     }
     onScroll();
 
-    document.querySelectorAll(".tab").forEach(function (t) { t.classList.toggle("on", t.getAttribute("data-tab") === state.tab); });
+    var onTab = state.tab === "moves" ? state.movesBack : state.tab;
+    document.querySelectorAll(".tab").forEach(function (t) { t.classList.toggle("on", t.getAttribute("data-tab") === onTab); });
     $("badge").hidden = !state.checks.length;
     $("badge").textContent = state.checks.length;
   }
@@ -1371,6 +1442,10 @@
       return;
     }
     if (el.id === "exportBtn") { exportChecks(); return; }
+    if (el.id === "movesOpen") { openMoveLog("settings"); return; }
+    if (el.hasAttribute("data-movelog")) { openMoveLog("scan", el.getAttribute("data-movelog")); return; }
+    if (el.id === "movesBack") { state.tab = state.movesBack; render(true); if (state.tab === "scan") scrollToResult(); return; }
+    if (el.hasAttribute("data-mfilter")) { state.moveFilter = el.getAttribute("data-mfilter"); render(false); return; }
     if (el.id === "logoutBtn") { logout(); return; }
   });
 
@@ -1385,6 +1460,7 @@
       state.locQ = { loc: sl, q: e.target.value };
       $("locList").innerHTML = locRows(sl, e.target.value);
     }
+    if (e.target.id === "moveSearch") { state.moveQ = e.target.value; $("moveList").innerHTML = moveRows(); }
     if (e.target.id === "countIn") updateHint(state.parts[$("saveCheck").getAttribute("data-pn")]);
     if (e.target.id === "newLoc") {
       var v = normCode(e.target.value), pn = $("saveMove").getAttribute("data-pn");
@@ -1538,7 +1614,7 @@
   async function logout() {
     stopCamera();
     await sb.auth.signOut();
-    state.user = null; state.result = []; state.tab = "scan"; state.parts = {}; state.locs = {}; state.checks = [];
+    state.user = null; state.result = []; state.tab = "scan"; state.parts = {}; state.locs = {}; state.checks = []; state.moveLog = null;
     render(true);
   }
 
