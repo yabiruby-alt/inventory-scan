@@ -56,6 +56,8 @@
 
 * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
 html, body { height: 100%; }
+/* 화면 확대·축소 막기: 두 번 눌러 확대 안 됨 (손가락 벌리기는 index.html viewport 에서 막음) */
+html { touch-action: manipulation; -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
 body { margin: 0; background: var(--bg); color: var(--label); font: var(--fs-body)/1.45 var(--font); letter-spacing: -0.01em; }
 button, input, textarea { font: inherit; color: inherit; }
 button { background: none; border: 0; padding: 0; cursor: pointer; text-align: inherit; }
