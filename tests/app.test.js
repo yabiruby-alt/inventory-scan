@@ -429,6 +429,11 @@ function check(name, ok, extra) { results.push((ok ? 'PASS ' : 'FAIL ') + name +
   await page.type('#countIn', '1a2');
   check('수량 입력칸은 숫자만', (await page.inputValue('#countIn')) === '12');
 
+  // ===== 화면 확대·축소 막기 =====
+  const vp = await page.getAttribute('meta[name=viewport]', 'content');
+  check('확대·축소 막음 (viewport)', vp.includes('user-scalable=no') && vp.includes('maximum-scale=1'), vp);
+  check('두 번 눌러 확대 막음', (await page.evaluate(() => getComputedStyle(document.documentElement).touchAction)) === 'manipulation');
+
   // ===== 휴대폰 뒤로가기: 창 닫기 → 결과 닫기 → 종료 확인 =====
   const back = async () => { await page.evaluate(() => history.back()); await page.waitForTimeout(200); };
   await back();

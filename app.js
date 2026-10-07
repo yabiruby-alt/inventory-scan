@@ -1590,6 +1590,10 @@
     if (t.classList && t.classList.contains("qty-in") && Date.now() - (t._focusAt || 0) < 500) caretEnd(t);
   });
 
+  // 확대·축소 막기 — viewport 설정을 무시하는 브라우저(iOS Safari 등)용: 두 손가락 확대 동작 취소
+  ["gesturestart", "gesturechange"].forEach(function (t) { document.addEventListener(t, function (e) { e.preventDefault(); }); });
+  document.addEventListener("touchmove", function (e) { if (e.touches.length > 1) e.preventDefault(); }, { passive: false });
+
   // ---------- 휴대폰 뒤로가기 ----------
   // 열린 창 닫기 → 화면 안의 '뒤로' → 마지막엔 종료 확인 (한 번에 앱 밖으로 나가지 않게)
   // Chrome 은 화면을 누르지 않은 상태에서 넣은 기록을 뒤로가기 때 건너뛰므로(→ 바로 종료),
