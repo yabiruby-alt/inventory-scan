@@ -209,7 +209,7 @@ function check(name, ok, extra) { results.push((ok ? 'PASS ' : 'FAIL ') + name +
   await page.evaluate(() => {   // 공유 메뉴 흉내 (OneDrive 로 보내기)
     window.__shared = null;
     navigator.canShare = () => true;
-    navigator.share = async (d) => { window.__shared = { name: d.files[0].name, size: d.files[0].size, type: d.files[0].type }; };
+    navigator.share = async (d) => { window.__shared = { name: d.files[0].name, size: d.files[0].size, type: d.files[0].type, title: d.title }; };
   });
   await page.click('#auditFinishOk');
   await page.waitForSelector('#reportView');
@@ -222,10 +222,20 @@ function check(name, ok, extra) { results.push((ok ? 'PASS ' : 'FAIL ') + name +
   const stt = await page.textContent('#rvState');
   check('PDF 미리 만들어 둠', stt.includes('PDF 준비됨'), stt);
   if (process.env.SHOTS) await page.screenshot({ path: path.join(process.env.SHOTS, 'report.png') });
+  // 처음 한 번은 브라우저가 거절 → '다시 보내기' 와 오류 내용 표시, 다시 누르면 보냄
+  await page.evaluate(() => {
+    const ok = navigator.share; let n = 0;
+    navigator.share = async (d) => { if (n++ === 0) throw new DOMException('Permission denied', 'NotAllowedError'); return ok(d); };
+  });
   await page.click('#rvShare');
   await page.waitForTimeout(200);
+  const retryTxt = await page.textContent('#rvRetry');
+  check('거절되면 다시 보내기 버튼과 오류 내용', (await page.isVisible('#rvShare2')) && retryTxt.includes('NotAllowedError: Permission denied'), retryTxt);
+  await page.click('#rvShare2');
+  await page.waitForTimeout(200);
+  check('다시 보내면 성공하고 다시 보내기 숨김', !(await page.isVisible('#rvShare2')), '');
   const shared = await page.evaluate(() => window.__shared);
-  check('OneDrive 공유로 PDF 보냄', shared && shared.name === '260928-1003 주간 재고조사 보고서.pdf' && shared.type === 'application/pdf' && shared.size > 10000, JSON.stringify(shared));
+  check('OneDrive 공유로 PDF 보냄', shared && shared.name === '260928-1003 주간 재고조사 보고서.pdf' && shared.type === 'application/pdf' && shared.size > 10000 && shared.title === undefined, JSON.stringify(shared));
   await page.fill('#rvName', '내 보고서');
   const [dl] = await Promise.all([page.waitForEvent('download'), page.click('#rvDownload')]);
   const pdfPath = path.join(process.env.SHOTS || require('os').tmpdir(), 'report.pdf');
