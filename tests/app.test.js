@@ -49,6 +49,7 @@ function check(name, ok, extra) { results.push((ok ? 'PASS ' : 'FAIL ') + name +
   for (let i = 0; i < 15; i++) parts.push({ item_cd: 'PN' + String(10000 + i), item_nm: '부품' + i, lct_cd: 'A140112', crt_qty: i + 1, alois_cd: 'A1', last_purc_dt: null, updated_at: iso(now - 600000) });
   parts.push({ item_cd: 'PN20000', item_nm: '다른', lct_cd: 'B000001', crt_qty: 2, alois_cd: null, last_purc_dt: null, updated_at: iso(now - 600000) });
   const src = { kind: 'weekly', period_start: '2026-09-28', period_end: '2026-10-03', items: [], updated_at: iso(now) };
+  let stockResult = { found: true, crt_qty: 1, lct_cd: 'B000001', rdc_qty: 0 };
   const audit = { id: 'aaaaaaaa-0000-0000-0000-000000000001', kind: 'weekly', period_start: '2026-09-28', period_end: '2026-10-03', item_count: 3, finished_at: null, started_by: USER.id, started_by_name: '시험', started_at: iso(now - 3600000) };
   const auditItems = [
     { audit_id: audit.id, item_cd: 'PN10000', item_nm: '부품0', lct_cd: 'A140112', qty: 1, status: null, counted: null, memo: null, checked_by_name: null, checked_at: null },
@@ -100,6 +101,7 @@ function check(name, ok, extra) { results.push((ok ? 'PASS ' : 'FAIL ') + name +
       }
     }
     if (t === 'inv_requests' && m === 'POST') { reqPosts.push(JSON.parse(req.postData())); return json({ id: 999 }, 201); }
+    if (t === 'inv_requests' && m === 'GET' && u.searchParams.get('id') === 'eq.999') return json({ status: 'done', result: stockResult, error: null });
     if (t === 'inv_requests' && m === 'GET') return json(moveReqs);
     if (t === 'inv_rr_parts') return json(rrParts);
     if (t === 'inv_checks') {
@@ -389,6 +391,16 @@ function check(name, ok, extra) { results.push((ok ? 'PASS ' : 'FAIL ') + name +
   const qs0 = await page.$eval('#sheet .qsplit', e => e.textContent);
   check('확인 창에 품번 크게', (await page.$eval('#sheet .sheet-pn', e => e.textContent + ' ' + getComputedStyle(e).fontSize)) === 'PN10002 24px');
   if (process.env.SHOTS) await page.screenshot({ path: path.join(process.env.SHOTS, 'audit_sheet.png') });
+  // ===== 재고 확인 창: 지금 DMS 재고 조회 (조사 시작 뒤 출고) =====
+  await page.unroute(SB + '/rest/v1/inv_status*');   // 데몬 응답 중으로
+  await page.click('#aNowBtn');
+  await page.waitForSelector('#aUseNow', { timeout: 5000 });
+  const nowTxt = await page.textContent('#aNow');
+  check('지금 DMS 재고 조회 → 시작 뒤 줄어든 수량', nowTxt.includes('지금 DMS1') && nowTxt.includes('2개 줄었습니다'), nowTxt);
+  check('조회는 stock 요청', reqPosts.some(r => r.kind === 'stock' && r.item_cd === 'PN10002'));
+  await page.click('#aUseNow');
+  check('지금 수량으로 실사 입력 + 메모', (await page.inputValue('#aCountIn')) === '1' && (await page.inputValue('#aMemoIn')).includes('출고 2개'), await page.inputValue('#aMemoIn'));
+  if (process.env.SHOTS) await page.screenshot({ path: path.join(process.env.SHOTS, 'audit_now.png') });
   check('RR 이 없는 부품도 확인 창에 RR 0 표시', qs0 === 'BMW3RR0' && !(await page.textContent('#sheet')).includes('아직 올라오지 않아'), qs0);
   await page.click('[data-close]');
   await page.click('[data-tab="log"]');

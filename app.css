@@ -353,3 +353,16 @@ button.row:active, .row-btn:active { background: var(--fill); }
 .qsplit div { display: flex; align-items: baseline; gap: 6px; }
 .qsplit span { font-size: var(--fs-md); color: var(--label2); }
 .qsplit b { font-size: var(--fs-xl); font-weight: 600; }
+
+/* 재고 확인 창: 지금 DMS 재고 (조사 시작 때와 비교) */
+.nowbox { display: flex; flex-direction: column; align-items: center; gap: 4px; margin: 0 0 12px; padding: 12px 14px; border-radius: var(--r); background: var(--surface); text-align: center; }
+.nowbox .btn-secondary { justify-content: center; }
+.nowbox-hint, .nowbox-sub { font-size: var(--fs-sm); color: var(--label2); font-variant-numeric: tabular-nums; }
+.nowbox-row { display: flex; align-items: baseline; gap: 6px; font-variant-numeric: tabular-nums; }
+.nowbox-row span { font-size: var(--fs-md); color: var(--label2); }
+.nowbox-row b { font-size: var(--fs-3xl); font-weight: 700; }
+.nowbox-row small { font-size: var(--fs-md); color: var(--label2); }
+.nowbox-msg { font-size: var(--fs-md); margin-top: 4px; }
+.nowbox-msg.ok { color: var(--ok); }
+.nowbox-msg.warn { color: var(--warn); }
+.nowbox .rdc-err { margin: 0 0 6px; }
