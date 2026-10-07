@@ -1188,7 +1188,8 @@
       '<div class="rv-panel">' +
         '<div class="rv-name"><input id="rvName" value="' + esc(report.name) + '" aria-label="파일 이름" autocomplete="off"><span>.pdf</span></div>' +
         '<p class="rv-state" id="rvState">PDF 만드는 중…</p>' +
-        '<div id="rvRetry" hidden><p class="rv-state err" id="rvErr"></p><button class="btn-primary" id="rvShare2" style="margin-top:8px">📤 다시 보내기</button></div>' +
+        '<div id="rvRetry" hidden><p class="rv-state err" id="rvErr"></p><button class="btn-primary" id="rvShare2" style="margin-top:8px">📤 다시 보내기</button>' +
+          '<a class="btn-primary rv-chrome" id="rvChrome" href="' + esc(chromeUrl()) + '" hidden>크롬에서 열기</a></div>' +
         '<button class="btn-primary" id="rvShare" style="margin-top:8px">OneDrive 에 PDF 저장</button>' +
         '<button class="btn-ghost" id="rvDownload">기기에 내려받기</button>' +
         '<p class="footnote">공유 메뉴에서 OneDrive 를 고른 뒤 저장할 폴더를 고르세요.</p>' +
@@ -1227,7 +1228,19 @@
   function shareRetry(on, err) {
     if (!$("rvRetry")) return;
     $("rvRetry").hidden = !on;
-    if (on) $("rvErr").textContent = "공유 메뉴가 열리지 않았습니다. 아래 버튼을 한 번 더 눌러 주세요." + (err ? " (" + err + " · " + browserName() + ")" : "");
+    if (!on) return;
+    // 삼성 인터넷은 PDF 파일 공유를 막음 (NotAllowedError: Permission denied) → 다시 눌러도 안 되므로 크롬으로 안내
+    var samsung = isSamsung();
+    $("rvErr").textContent = samsung
+      ? "삼성 인터넷은 PDF 파일 공유를 막고 있습니다. 크롬에서 앱을 열어 저장하거나, 내려받은 뒤 OneDrive 앱에서 올려 주세요. (" + err + ")"
+      : "공유 메뉴가 열리지 않았습니다. 아래 버튼을 한 번 더 눌러 주세요." + (err ? " (" + err + " · " + browserName() + ")" : "");
+    $("rvShare2").hidden = samsung;
+    $("rvChrome").hidden = !samsung;
+  }
+  function isSamsung() { return /SamsungBrowser/.test(navigator.userAgent); }
+  // 같은 주소를 크롬으로 엶 (안드로이드 intent 주소. 크롬이 없으면 그냥 이 주소를 엶)
+  function chromeUrl() {
+    return "intent://" + location.host + location.pathname + "#Intent;scheme=https;package=com.android.chrome;S.browser_fallback_url=" + encodeURIComponent(location.href) + ";end";
   }
   function browserName() {
     var u = navigator.userAgent;

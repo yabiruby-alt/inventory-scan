@@ -186,7 +186,7 @@ function check(name, ok, extra) { results.push((ok ? 'PASS ' : 'FAIL ') + name +
   // ===== 2. 수량 다름 → 다시 수량 다름 → 일치 =====
   async function mark(pn, diff, n) {
     await page.click('[data-aitem="' + pn + '"]');
-    if (diff) { await page.click('#aDiffToggle'); await page.fill('#aCountIn', String(n)); await page.click('#aDiffSave'); }
+    if (diff) { await page.click('#aDiffToggle'); if (await page.isVisible('#aOk')) throw new Error('수량 다름을 누르면 일치 버튼이 숨어야 함'); await page.fill('#aCountIn', String(n)); await page.click('#aDiffSave'); }
     else await page.click('#aOk');
     await page.waitForTimeout(300);
   }
@@ -234,6 +234,20 @@ function check(name, ok, extra) { results.push((ok ? 'PASS ' : 'FAIL ') + name +
   await page.click('#rvShare2');
   await page.waitForTimeout(200);
   check('다시 보내면 성공하고 다시 보내기 숨김', !(await page.isVisible('#rvShare2')), '');
+  // 삼성 인터넷: PDF 공유를 막음 → 다시 보내기 대신 '크롬에서 열기'
+  await page.evaluate(() => {
+    window.__ua = navigator.userAgent;
+    Object.defineProperty(navigator, 'userAgent', { configurable: true, get: () => window.__ua + ' SamsungBrowser/28.0' });
+    window.__ok = navigator.share;
+    navigator.share = async () => { throw new DOMException('Permission denied', 'NotAllowedError'); };
+  });
+  await page.click('#rvShare');
+  await page.waitForTimeout(200);
+  const sm = await page.textContent('#rvRetry');
+  const href = await page.getAttribute('#rvChrome', 'href');
+  check('삼성 인터넷이면 크롬에서 열기 안내', sm.includes('삼성 인터넷은 PDF 파일 공유를 막고') && await page.isVisible('#rvChrome') && !(await page.isVisible('#rvShare2')) && href.startsWith('intent://localhost') && href.includes('package=com.android.chrome'), href);
+  await page.evaluate(() => { Object.defineProperty(navigator, 'userAgent', { configurable: true, get: () => window.__ua }); navigator.share = window.__ok; });
+  check('보고서 종이는 강제 다크 모드 제외', await page.$eval('.rp-page', e => getComputedStyle(e).colorScheme.includes('light')), '');
   const shared = await page.evaluate(() => window.__shared);
   check('OneDrive 공유로 PDF 보냄', shared && shared.name === '260928-1003 주간 재고조사 보고서.pdf' && shared.type === 'application/pdf' && shared.size > 10000 && shared.title === undefined, JSON.stringify(shared));
   await page.fill('#rvName', '내 보고서');

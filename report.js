@@ -30,7 +30,7 @@
   // 보고서 양식 (여기만 바꾸면 됨)
   // ============================================================
   var CSS = [
-    ".rp-page{box-sizing:border-box;position:relative;width:210mm;height:297mm;padding:12mm 12mm 20mm;background:#fff;color:#111;overflow:hidden;",
+    ".rp-page{box-sizing:border-box;position:relative;width:210mm;height:297mm;padding:12mm 12mm 20mm;background:#fff;color:#111;overflow:hidden;color-scheme:only light;forced-color-adjust:none;",
     "font-family:-apple-system,'Noto Sans KR','Noto Sans CJK KR','Apple SD Gothic Neo','Malgun Gothic',sans-serif;font-size:9pt;line-height:1.35}",
     ".rp-page *{box-sizing:border-box}",
     ".rp-foot{position:absolute;left:0;right:0;bottom:7mm;text-align:center;font-size:7pt;color:#999;line-height:1}",
