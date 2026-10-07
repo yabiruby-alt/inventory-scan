@@ -106,29 +106,66 @@
   }
 
   // ---------- 데이터 ----------
-  async function loadParts() {
+  // 현재고는 처음에 전부 받고, 그 뒤로는 데몬이 바꾼 행만 받음 (휴대폰 데이터 절약). 1시간마다는 전부 다시 받음
+  var PARTS_FULL_MS = 60 * 60000;
+  var partsSyncAt = null, partsFullAt = 0;   // 마지막으로 받은 행의 updated_at (서버 시각 그대로), 마지막 전체 받기
+  async function fetchParts(since) {
     var all = [], from = 0, size = 1000;
     for (;;) {
-      var r = await sb.from("inv_parts").select("item_cd,item_nm,lct_cd,crt_qty,alois_cd,last_purc_dt").order("item_cd").range(from, from + size - 1);
+      var q = sb.from("inv_parts").select("item_cd,item_nm,lct_cd,crt_qty,alois_cd,last_purc_dt,updated_at");
+      if (since) q = q.gte("updated_at", since);
+      var r = await q.order("item_cd").range(from, from + size - 1);
       if (r.error) throw r.error;
       all = all.concat(r.data);
       if (r.data.length < size) break;
       from += size;
     }
+    all.forEach(function (p) { if (!partsSyncAt || Date.parse(p.updated_at) > Date.parse(partsSyncAt)) partsSyncAt = p.updated_at; });
+    return all;
+  }
+  function locRemove(loc, pn) {
+    if (!loc || !state.locs[loc]) return;
+    state.locs[loc] = state.locs[loc].filter(function (k) { return k !== pn; });
+    if (!state.locs[loc].length) delete state.locs[loc];
+  }
+  function locAdd(loc, pn) { if (loc) (state.locs[loc] = state.locs[loc] || []).push(pn); }
+  async function loadParts() {
+    partsSyncAt = null;
+    var all = await fetchParts(null);
     var parts = {}, locs = {};
     all.forEach(function (p) {
       parts[p.item_cd] = p;
       if (p.lct_cd) (locs[p.lct_cd] = locs[p.lct_cd] || []).push(p.item_cd);
     });
     state.parts = parts; state.locs = locs;
+    partsFullAt = Date.now();
+  }
+  async function updateParts() {
+    if (!partsSyncAt || Date.now() - partsFullAt > PARTS_FULL_MS) return loadParts();
+    var rows = await fetchParts(partsSyncAt);
+    rows.forEach(function (p) {
+      var old = state.parts[p.item_cd];
+      if (!old || old.lct_cd !== p.lct_cd) { if (old) locRemove(old.lct_cd, p.item_cd); locAdd(p.lct_cd, p.item_cd); }
+      state.parts[p.item_cd] = p;
+    });
+    // 없어진 품번은 바뀐 행으로 알 수 없으니, 개수가 다르면 전부 다시 받음
+    var c = await sb.from("inv_parts").select("item_cd", { count: "exact", head: true });
+    if (!c.error && c.count !== Object.keys(state.parts).length) await loadParts();
   }
   async function loadStatus() {
     var r = await sb.from("inv_status").select("*").maybeSingle();
     if (!r.error) state.status = r.data;
   }
   async function loadChecks() {
-    var r = await sb.from("inv_checks").select("*").is("cleared_at", null).order("checked_at", { ascending: false }).limit(500);
-    if (!r.error) state.checks = r.data;
+    var all = [], from = 0, size = 1000;
+    for (;;) {
+      var r = await sb.from("inv_checks").select("*").is("cleared_at", null).order("checked_at", { ascending: false }).order("id").range(from, from + size - 1);
+      if (r.error) return;
+      all = all.concat(r.data);
+      if (r.data.length < size) break;
+      from += size;
+    }
+    state.checks = all;
   }
   async function loadAudits() {
     var src = await sb.from("inv_audit_source").select("kind,period_start,period_end,items,updated_at");
@@ -150,6 +187,7 @@
     }
     all.sort(function (a, b) { return (a.lct_cd || "~").localeCompare(b.lct_cd || "~") || a.item_cd.localeCompare(b.item_cd); });
     state.auditItems = all;
+    applyOutbox(auditId);
   }
 
   var lastPartsAt = null;
@@ -158,9 +196,10 @@
     var at = state.status && state.status.parts_at;
     if (at && at !== lastPartsAt) {   // 데몬이 새로 올렸으면 현재고 다시 받기
       lastPartsAt = at;
-      await loadParts();
+      try { await updateParts(); } catch (e) { /* 다음 확인 때 다시 */ }
       await loadAudits();
     }
+    flushOutbox();
     render(false);
   }
 
@@ -625,13 +664,16 @@
     stopCamera();
     host.innerHTML = '<div class="scanner">' + vf +
       '<form class="search" id="manual" autocomplete="off">' + SEARCH + '<input id="manualInput" inputmode="text" autocapitalize="characters" placeholder="품번 또는 위치 직접 입력" aria-label="품번 또는 위치"><button type="submit">조회</button></form>' +
-      (daemonStale() ? '<div class="notice" style="margin:8px 0 0">DMS 연결 PC가 응답하지 않습니다. 재고는 ' + basis() + ' 기준이고, 연결될 때까지 RDC 조회·위치 변경은 할 수 없습니다.</div>' : '') +
+      '<div id="daemonNotice">' + daemonNotice() + '</div>' +
       '</div>';
     renderCamTools();
     setTimeout(syncCamera, 0);
   }
 
   // ---------- 스캔 탭 ----------
+  function daemonNotice() {
+    return daemonStale() ? '<div class="notice" style="margin:8px 0 0">DMS 연결 PC가 응답하지 않습니다. 재고는 ' + basis() + ' 기준이고, 연결될 때까지 RDC 조회·위치 변경은 할 수 없습니다.</div>' : '';
+  }
   function viewIdle() {
     return '<div class="idle">' +
       '<svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 14V9a3 3 0 0 1 3-3h5M34 6h5a3 3 0 0 1 3 3v5M42 34v5a3 3 0 0 1-3 3h-5M14 42H9a3 3 0 0 1-3-3v-5"/><path d="M15 15v18M20 15v18M26 15v18M32 15v18" stroke-width="2.4"/></svg>' +
@@ -868,8 +910,9 @@
         var locLeft = locItems.filter(function (x) { return !x.status; }).length;
         html += '<div class="loc-head"><span class="mono-loc">' + esc(cur || "위치 없음") + '</span><span>' + (started ? (locLeft ? locLeft + '건 남음' : '완료') : locItems.length + '건') + '</span></div><div class="group">';
       }
-      var mark = it.status === "ok" ? '<span class="pill ok">일치</span>'
-        : it.status === "diff" ? '<span class="pill warn">실사 ' + qtyNum(it.counted) + '</span>' : '';
+      var mark = (it.pending ? '<span class="pill">전송 대기</span>' : '') +
+        (it.status === "ok" ? '<span class="pill ok">일치</span>'
+        : it.status === "diff" ? '<span class="pill warn">실사 ' + qtyNum(it.counted) + '</span>' : '');
       html += '<button class="row' + (it.status ? " done" : "") + '" data-aitem="' + esc(it.item_cd) + '"' + (started ? '' : ' disabled') + '>' +
         '<div class="row-main"><div class="pn">' + esc(it.item_cd) + '</div><div class="row-sub">' + esc(it.item_nm) + (it.checked_by_name ? ' · ' + esc(it.checked_by_name) : '') + '</div></div>' +
         '<div class="qty">' + qtyNum(it.qty) + '<small>EA</small></div>' + mark + '</button>';
@@ -946,15 +989,69 @@
 
   async function markAudit(pn, status, counted, memo) {
     var a = currentAudit(), it = findAuditItem(pn);
-    var r = await sb.from("inv_audit_items").update({ status: status, counted: counted, memo: memo || null })
-      .eq("audit_id", a.id).eq("item_cd", pn).select().single();
-    if (r.error) { toast("저장하지 못했습니다: " + r.error.message); return; }
-    Object.assign(it, r.data);
-    var synced = await syncAuditCheck(a, it, status, counted, memo);
+    var job = { userId: state.user.id, auditId: a.id, kind: a.kind, pn: pn, status: status, counted: counted, memo: memo || null, tries: 0 };
+    var res = await sendAuditMark(job);
+    if (res === "net") {
+      queueAuditMark(job);
+      toast("연결이 불안정해 휴대폰에 저장했습니다. 연결되면 자동으로 보냅니다");
+    } else if (res !== "ok" && res !== "check") {
+      toast(res); return;
+    }
     auditCounts[a.id] = auditStatsOf(state.auditItems);
     closeSheet(); render(false);
-    if (!synced) toast("조사 결과는 저장했지만 체크 기록에 반영하지 못했습니다. 다시 저장해 주세요");
+    if (res === "check") toast("조사 결과는 저장했지만 체크 기록에 반영하지 못했습니다. 다시 저장해 주세요");
   }
+
+  // 전파가 약한 곳: 보내지 못한 재고조사 확인을 이 휴대폰에 두었다가 연결되면 다시 보냄
+  var outbox = store.get("auditOutbox", []), flushing = false;
+  function isNetErr(r) { return !navigator.onLine || !r.status; }
+  // 결과: "ok" | "check"(항목은 저장, 체크 기록 실패) | "net"(연결 문제) | 오류 문구
+  async function sendAuditMark(job) {
+    var r = await sb.from("inv_audit_items").update({ status: job.status, counted: job.counted, memo: job.memo })
+      .eq("audit_id", job.auditId).eq("item_cd", job.pn).select().single();
+    if (r.error) return isNetErr(r) ? "net" : "저장하지 못했습니다: " + r.error.message;
+    var it = state.auditItems.length && currentAudit() && currentAudit().id === job.auditId ? findAuditItem(job.pn) : null;
+    if (it) { Object.assign(it, r.data); delete it.pending; }
+    return (await syncAuditCheck({ id: job.auditId, kind: job.kind }, r.data, job.status, job.counted, job.memo)) ? "ok" : "check";
+  }
+  function queueAuditMark(job) {
+    outbox = outbox.filter(function (j) { return !(j.auditId === job.auditId && j.pn === job.pn); }).concat([job]);
+    store.set("auditOutbox", outbox);
+    applyOutbox(job.auditId);
+  }
+  // 아직 보내지 못한 확인을 화면 목록에 덮어 보여줌
+  function applyOutbox(auditId) {
+    outbox.forEach(function (j) {
+      if (j.auditId !== auditId) return;
+      var it = findAuditItem(j.pn);
+      if (it) Object.assign(it, { status: j.status, counted: j.counted, memo: j.memo, pending: true, checked_by_name: state.user.name, checked_at: new Date().toISOString() });
+    });
+  }
+  async function flushOutbox() {
+    if (flushing || !state.user || !navigator.onLine) return;
+    var mine = outbox.filter(function (j) { return j.userId === state.user.id; });
+    if (!mine.length) return;
+    flushing = true;
+    var sent = 0, dropped = [];
+    try {
+      for (var i = 0; i < mine.length; i++) {
+        var job = mine[i], res = await sendAuditMark(job);
+        if (res === "net") break;
+        if (res !== "ok" && ++job.tries < 5) { store.set("auditOutbox", outbox); continue; }   // 다음에 다시
+        outbox = outbox.filter(function (j) { return j !== job; });
+        store.set("auditOutbox", outbox);
+        if (res === "ok") sent++; else dropped.push(job.pn);
+      }
+    } finally { flushing = false; }
+    if (sent) {
+      var a = currentAudit();
+      if (a) auditCounts[a.id] = auditStatsOf(state.auditItems);
+      toast("휴대폰에 두었던 조사 결과 " + sent + "건을 보냈습니다");
+    }
+    if (dropped.length) toast("조사 결과를 보내지 못했습니다: " + dropped.join(", ") + " — 다시 확인해 주세요");
+    if (sent || dropped.length) { if ($("sheet").hidden) render(false); }
+  }
+  window.addEventListener("online", flushOutbox);
   // 조사 항목 하나에 열린 체크 기록은 하나만: 수량 다름이면 새로 쓰거나 고치고, 일치로 바꾸면 지움
   async function syncAuditCheck(a, it, status, counted, memo) {
     var ex = await sb.from("inv_checks").select("id").eq("audit_id", a.id).eq("item_cd", it.item_cd).is("cleared_at", null).order("id");
@@ -964,13 +1061,13 @@
     var stale = ids.filter(function (id) { return id !== keep; });
     var now = new Date().toISOString(), w;
     if (stale.length) {
-      w = await sb.from("inv_checks").update({ cleared_at: now, cleared_by_name: state.user.name }).in("id", stale);
+      w = await sb.from("inv_checks").update({ cleared_at: now }).in("id", stale);
       if (w.error) return false;
     }
     if (status === "diff") {
       var row = { counted_qty: counted, memo: memo || (AUDIT_TITLE[a.kind] + " 중 확인") };
       w = keep
-        ? await sb.from("inv_checks").update(Object.assign(row, { checked_at: now, checked_by: state.user.id, checked_by_name: state.user.name })).eq("id", keep)
+        ? await sb.from("inv_checks").update(row).eq("id", keep)
         : await sb.from("inv_checks").insert(Object.assign(row, { item_cd: it.item_cd, item_nm: it.item_nm, lct_cd: it.lct_cd, dms_qty: it.qty, audit_id: a.id, checked_by: state.user.id }));
       if (w.error) return false;
     }
@@ -1103,6 +1200,7 @@
 
     var withScanner = state.tab === "scan" || (state.tab === "audit" && state.auditOpen && !!currentAudit());
     showScanner(withScanner);
+    if ($("daemonNotice")) $("daemonNotice").innerHTML = daemonNotice();
 
     if (state.tab === "scan") {
       nav.innerHTML = '<span></span><span class="nav-title always">스캔</span><span class="nav-meta">' + basis() + ' 기준</span>';
@@ -1330,8 +1428,8 @@
         if (res.status === "done") {
           state.moves[pn] = { from: from, to: to, status: "done", time: hhmm(), at: Date.now() };
           var p = state.parts[pn];
-          if (p.lct_cd && state.locs[p.lct_cd]) state.locs[p.lct_cd] = state.locs[p.lct_cd].filter(function (k) { return k !== pn; });
-          p.lct_cd = to; (state.locs[to] = state.locs[to] || []).push(pn);
+          locRemove(p.lct_cd, pn);
+          p.lct_cd = to; locAdd(to, pn);
         } else {
           state.moves[pn] = { from: from, to: to, status: "failed", error: res.error, at: Date.now() };
         }
@@ -1351,8 +1449,8 @@
         var p = state.parts[pn], r = res.result;
         if (p && r.found) {
           if (p.lct_cd !== r.lct_cd) {
-            if (p.lct_cd && state.locs[p.lct_cd]) state.locs[p.lct_cd] = state.locs[p.lct_cd].filter(function (k) { return k !== pn; });
-            if (r.lct_cd) (state.locs[r.lct_cd] = state.locs[r.lct_cd] || []).push(pn);
+            locRemove(p.lct_cd, pn);
+            locAdd(r.lct_cd, pn);
           }
           p.crt_qty = r.crt_qty; p.lct_cd = r.lct_cd;
           state.rdc[pn] = { status: "done", result: r, at: Date.now() };
@@ -1433,6 +1531,7 @@
     }
     state.loading = false;
     render(true);
+    flushOutbox();
     if (r.data.must_change_password) toast("비밀번호 변경이 필요합니다. 태블릿 앱에서 변경해 주세요.");
   }
 
