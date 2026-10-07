@@ -746,11 +746,11 @@
     if (!list.length) return '<div class="empty">찾는 부품이 이 위치에 없습니다</div>';
     return '<div class="group">' + list.map(function (p) {
       var c = chk[p.item_cd];
-      var d = c ? c.counted_qty - c.dms_qty : 0;
+      var d = c ? c.counted_qty - checkBase(c) : 0, rr = rrQty(p.item_cd);
       return '<div class="prow">' +
-        '<button class="row-btn" data-go="' + esc(p.item_cd) + '"><div class="row-main"><div class="pn">' + esc(p.item_cd) + '</div><div class="row-sub">' + esc(p.item_nm) + '</div>' +
+        '<button class="row-btn" data-go="' + esc(p.item_cd) + '"><div class="row-main"><div class="pn">' + esc(p.item_cd) + '</div><div class="row-sub">' + esc(p.item_nm) + '</div>' + splitNote(p.crt_qty, rr) +
         (c ? '<div class="diff-note">실사 ' + qtyNum(c.counted_qty) + ' · 차이 ' + (d > 0 ? "+" : "−") + Math.abs(qtyNum(d)) + '</div>' : '') +
-        '</div><div class="qty">' + qtyNum(p.crt_qty) + '<small>EA</small></div></button>' +
+        '</div><div class="qty">' + qtyNum(Number(p.crt_qty) + rr) + '<small>EA</small></div></button>' +
         '<button class="check' + (c ? " on" : "") + '" data-check="' + esc(p.item_cd) + '" aria-label="' + esc(p.item_cd) + ' 수량 다름 체크"><i></i></button>' +
       '</div>';
     }).join("") + '</div>';
@@ -760,7 +760,7 @@
     var list = partsAt(loc);
     var chk = openChecksByItem();
     var q = state.locQ && state.locQ.loc === loc ? state.locQ.q : "";
-    var total = list.reduce(function (s, p) { return s + Number(p.crt_qty); }, 0);
+    var total = list.reduce(function (s, p) { return s + Number(p.crt_qty) + rrQty(p.item_cd); }, 0);
     var checked = list.filter(function (p) { return chk[p.item_cd]; }).length;
     return resultHead("위치", loc) +
       '<p class="meta" style="margin-bottom:12px">해운대 부품창고 · ' + basis() + ' 기준</p>' +
@@ -790,6 +790,14 @@
     return '<div class="tile-label">RDC 재고</div><div class="tile-num' + (q ? "" : " zero") + '">' + q.toLocaleString() + '<small>EA</small></div><div class="tile-foot">' + hhmm(r.at) + ' 조회 · <button class="btn-inline" data-rdc-retry="' + esc(pn) + '">다시</button></div>';
   }
 
+  // RR 재고: 같은 자리에 BMW·RR 부품이 함께 있어 센 수량은 합계 → 비교는 BMW + RR
+  function rrQty(pn) { var r = state.rrParts[pn]; return r ? Number(r.crt_qty) || 0 : 0; }
+  // 재고조사 항목: 조사 시작 때 고정한 RR 수량, 없으면(이 기능 전에 시작한 조사) 최신 RR 현재고
+  function itemRr(it) { return it.rr_qty != null ? Number(it.rr_qty) : rrQty(it.item_cd); }
+  function itemTotal(it) { return Number(it.qty) + itemRr(it); }
+  // 체크 기록의 비교 기준 (DMS + RR)
+  function checkBase(c) { return Number(c.dms_qty) + (Number(c.rr_qty) || 0); }
+  function splitNote(bmw, rr) { return rr ? '<div class="row-sub rr-split">BMW ' + qtyNum(bmw) + ' + RR ' + qtyNum(rr) + '</div>' : ''; }
   function rrBasis() { return state.status && state.status.rr_parts_at ? hhmm(state.status.rr_parts_at) : null; }
   function rrTile(pn) {
     var label = '<div class="tile-label">RR 재고</div>', at = rrBasis();
@@ -853,7 +861,7 @@
         '<div class="tile rdc" id="rdcTile" data-pn="' + esc(pn) + '">' + rdcTile(pn) + '</div>' +
       '</div>' +
       moveBanner(pn) +
-      (c ? '<div class="banner">수량 다름 체크됨 · DMS ' + qtyNum(c.dms_qty) + ' / 실사 ' + qtyNum(c.counted_qty) + (c.memo ? ' · ' + esc(c.memo) : '') + '</div>' : '') +
+      (c ? '<div class="banner">수량 다름 체크됨 · DMS ' + qtyNum(c.dms_qty) + (Number(c.rr_qty) ? ' + RR ' + qtyNum(c.rr_qty) : '') + ' / 실사 ' + qtyNum(c.counted_qty) + (c.memo ? ' · ' + esc(c.memo) : '') + '</div>' : '') +
       '<div class="section-label">부품 정보</div>' +
       '<div class="group">' +
         '<div class="row"><div class="row-main">위치</div><span class="row-value mono-loc">' + esc(p.lct_cd || "없음") + '</span></div>' +
@@ -968,8 +976,8 @@
         (it.status === "ok" ? '<span class="pill ok">일치</span>'
         : it.status === "diff" ? '<span class="pill warn">실사 ' + qtyNum(it.counted) + '</span>' : '');
       html += '<button class="row' + (it.status ? " done" : "") + '" data-aitem="' + esc(it.item_cd) + '"' + (started ? '' : ' disabled') + '>' +
-        '<div class="row-main"><div class="pn">' + esc(it.item_cd) + '</div><div class="row-sub">' + esc(it.item_nm) + (it.checked_by_name ? ' · ' + esc(it.checked_by_name) : '') + '</div></div>' +
-        '<div class="qty">' + qtyNum(it.qty) + '<small>EA</small></div>' + mark + '</button>';
+        '<div class="row-main"><div class="pn">' + esc(it.item_cd) + '</div><div class="row-sub">' + esc(it.item_nm) + (it.checked_by_name ? ' · ' + esc(it.checked_by_name) : '') + '</div>' + splitNote(it.qty, itemRr(it)) + '</div>' +
+        '<div class="qty">' + qtyNum(itemTotal(it)) + '<small>EA</small></div>' + mark + '</button>';
     });
     return html + '</div>';
   }
@@ -1036,11 +1044,13 @@
       '<div class="sheet-head"><button class="cancel" data-close>닫기</button><h2>재고 확인</h2><span></span></div>' +
       '<div class="sheet-loc mono-loc">' + esc(it.lct_cd || "위치 없음") + '</div>' +
       '<p class="sheet-sub"><span class="pn">' + esc(pn) + '</span><br>' + esc(it.item_nm) + '</p>' +
-      '<div class="bigqty"><span>DMS 현재고</span><b>' + qtyNum(it.qty) + '</b><small>EA</small></div>' + prev +
+      (itemRr(it) ? '<div class="bigqty"><span>BMW + RR 합계</span><b>' + qtyNum(itemTotal(it)) + '</b><small>EA</small></div>' +
+          '<p class="sheet-sub">BMW ' + qtyNum(it.qty) + ' + RR ' + qtyNum(itemRr(it)) + ' — 둘을 합한 수량과 비교하세요</p>'
+        : '<div class="bigqty"><span>DMS 현재고</span><b>' + qtyNum(it.qty) + '</b><small>EA</small></div>') + prev +
       '<button class="btn-primary" id="aOk" data-pn="' + esc(pn) + '">일치</button>' +
       '<button class="btn-ghost" id="aDiffToggle">수량 다름</button>' +
       '<div id="aDiffBox" hidden>' +
-        '<div class="group" style="margin-top:12px"><div class="row stepper"><div class="row-main">실사 수량</div><div class="stepper-ctl"><button type="button" data-astep="-1" aria-label="하나 빼기">−</button><input id="aCountIn" type="number" inputmode="numeric" min="0" value="' + qtyNum(it.status === "diff" ? it.counted : it.qty) + '" aria-label="실사 수량"><button type="button" data-astep="1" aria-label="하나 더하기">+</button></div></div>' +
+        '<div class="group" style="margin-top:12px"><div class="row stepper"><div class="row-main">실사 수량</div><div class="stepper-ctl"><button type="button" data-astep="-1" aria-label="하나 빼기">−</button><input id="aCountIn" type="number" inputmode="numeric" min="0" value="' + qtyNum(it.status === "diff" ? it.counted : itemTotal(it)) + '" aria-label="실사 수량"><button type="button" data-astep="1" aria-label="하나 더하기">+</button></div></div>' +
         '<div class="row"><textarea class="field" id="aMemoIn" rows="2" placeholder="메모 (선택)" aria-label="메모"></textarea></div></div>' +
         '<button class="btn-primary" id="aDiffSave" data-pn="' + esc(pn) + '">수량 다름으로 저장</button>' +
       '</div>'
@@ -1127,7 +1137,7 @@
       if (w.error) return false;
     }
     if (status === "diff") {
-      var row = { counted_qty: counted, memo: memo || (AUDIT_TITLE[a.kind] + " 중 확인") };
+      var row = { counted_qty: counted, rr_qty: itemRr(it), memo: memo || (AUDIT_TITLE[a.kind] + " 중 확인") };
       w = keep
         ? await sb.from("inv_checks").update(row).eq("id", keep)
         : await sb.from("inv_checks").insert(Object.assign(row, { item_cd: it.item_cd, item_nm: it.item_nm, lct_cd: it.lct_cd, dms_qty: it.qty, audit_id: a.id, checked_by: state.user.id }));
@@ -1187,8 +1197,8 @@
       title: REPORT_TITLE[a.kind], branch: state.user.branch + " 부품창고", period: periodLabel(a.kind, a),
       started_at: a.started_at, started_by: a.started_by_name, finished_at: a.finished_at, finished_by: a.finished_by_name, printed_at: new Date(),
       total: items.length, ok: items.length - diff.length - left.length, diff: diff.length, left: left.length,
-      diffItems: diff.map(function (it) { return { lct_cd: it.lct_cd, item_cd: it.item_cd, item_nm: it.item_nm, qty: it.qty, counted: it.counted, by: it.checked_by_name, memo: it.memo }; }),
-      leftItems: left
+      diffItems: diff.map(function (it) { return { lct_cd: it.lct_cd, item_cd: it.item_cd, item_nm: it.item_nm, qty: it.qty, rr: itemRr(it), counted: it.counted, by: it.checked_by_name, memo: it.memo }; }),
+      leftItems: left.map(function (it) { return { lct_cd: it.lct_cd, item_cd: it.item_cd, item_nm: it.item_nm, qty: it.qty, rr: itemRr(it) }; })
     };
   }
   // 파일 이름: "261007 일일 재고조사 보고서", "260928-1003 주간 재고조사 보고서"
@@ -1315,9 +1325,9 @@
     state.checks.forEach(function (c) {
       var d = new Date(c.checked_at), key = (d.getMonth() + 1) + "월 " + d.getDate() + "일";
       if (key !== day) { if (day !== null) html += '</div>'; day = key; html += '<div class="section-label">' + key + '</div><div class="group">'; }
-      var diff = c.counted_qty - c.dms_qty;
-      html += '<button class="row" data-logitem="' + c.id + '"><div class="row-main"><div class="pn">' + esc(c.item_cd) + '</div><div class="row-sub">' + esc(c.item_nm) + '</div><div class="row-sub">' + esc(c.lct_cd || "-") + ' · ' + hhmm(c.checked_at) + ' · ' + esc(c.checked_by_name || "") + (c.memo ? ' · ' + esc(c.memo) : '') + '</div></div>' +
-        '<div class="diff"><b>' + qtyNum(c.dms_qty) + ' → ' + qtyNum(c.counted_qty) + '</b><span class="tag warn">' + (diff > 0 ? "+" : "−") + Math.abs(qtyNum(diff)) + '</span></div></button>';
+      var diff = c.counted_qty - checkBase(c);
+      html += '<button class="row" data-logitem="' + c.id + '"><div class="row-main"><div class="pn">' + esc(c.item_cd) + '</div><div class="row-sub">' + esc(c.item_nm) + '</div><div class="row-sub">' + esc(c.lct_cd || "-") + ' · ' + hhmm(c.checked_at) + ' · ' + esc(c.checked_by_name || "") + (c.memo ? ' · ' + esc(c.memo) : '') + '</div>' + splitNote(c.dms_qty, Number(c.rr_qty) || 0) + '</div>' +
+        '<div class="diff"><b>' + qtyNum(checkBase(c)) + ' → ' + qtyNum(c.counted_qty) + '</b><span class="tag warn">' + (diff > 0 ? "+" : "−") + Math.abs(qtyNum(diff)) + '</span></div></button>';
     });
     return head +
       '<div style="margin-bottom:6px"><button class="btn-secondary" id="exportBtn">엑셀로 내보내기</button></div>' + html + '</div>' +
@@ -1511,14 +1521,16 @@
   $("backdrop").addEventListener("click", closeSheet);
 
   function openCheck(pn) {
-    var p = state.parts[pn], c = openChecksByItem()[pn];
-    var start = c ? c.counted_qty : p.crt_qty;
+    var p = state.parts[pn], c = openChecksByItem()[pn], rr = rrQty(pn);
+    var start = c ? c.counted_qty : Number(p.crt_qty) + rr;
     openSheet(
       '<div class="sheet-head"><button class="cancel" data-close>취소</button><h2>수량 다름 체크</h2><span></span></div>' +
       '<div class="sheet-loc mono-loc">' + esc(p.lct_cd || "위치 없음") + '</div>' +
       '<p class="sheet-sub"><span class="pn">' + esc(pn) + '</span><br>' + esc(p.item_nm) + '</p>' +
       '<div class="group">' +
         '<div class="row"><div class="row-main">DMS 수량</div><span class="row-value qty" style="font-size:18px">' + qtyNum(p.crt_qty) + '</span></div>' +
+        (rr ? '<div class="row"><div class="row-main">RR 수량</div><span class="row-value qty" style="font-size:18px">' + qtyNum(rr) + '</span></div>' +
+          '<div class="row"><div class="row-main">합계</div><span class="row-value qty" style="font-size:18px;font-weight:700">' + qtyNum(Number(p.crt_qty) + rr) + '</span></div>' : '') +
         '<div class="row stepper"><div class="row-main">실사 수량</div><div class="stepper-ctl"><button type="button" data-step="-1" aria-label="하나 빼기">−</button><input id="countIn" type="number" inputmode="numeric" min="0" value="' + qtyNum(start) + '" aria-label="실사 수량"><button type="button" data-step="1" aria-label="하나 더하기">+</button></div></div>' +
         '<div class="row"><textarea class="field" id="memoIn" rows="2" placeholder="메모 (선택)" aria-label="메모">' + esc(c ? c.memo : "") + '</textarea></div>' +
       '</div>' +
@@ -1531,9 +1543,9 @@
   function updateHint(p) {
     var v = parseFloat($("countIn").value), h = $("diffHint");
     if (isNaN(v)) { h.textContent = "실사 수량을 입력하세요."; $("saveCheck").disabled = true; return; }
-    var d = v - Number(p.crt_qty);
+    var rr = rrQty(p.item_cd), d = v - Number(p.crt_qty) - rr, base = rr ? "DMS + RR 합계" : "DMS 수량";
     $("saveCheck").disabled = d === 0;
-    h.textContent = d === 0 ? "DMS 수량과 같아서 체크할 내용이 없습니다." : "DMS보다 " + Math.abs(qtyNum(d)) + "개 " + (d > 0 ? "많습니다." : "적습니다.");
+    h.textContent = d === 0 ? base + "과 같아서 체크할 내용이 없습니다." : base + "보다 " + Math.abs(qtyNum(d)) + "개 " + (d > 0 ? "많습니다." : "적습니다.");
   }
 
   function openMove(pn) {
@@ -1627,7 +1639,7 @@
       var apn = el.getAttribute("data-pn"), av = parseFloat($("aCountIn").value), ait = findAuditItem(apn);
       if (isNaN(av)) { toast("실사 수량을 입력하세요"); return; }
       el.disabled = true;
-      if (av === Number(ait.qty)) { markAudit(apn, "ok", null); return; }
+      if (av === itemTotal(ait)) { markAudit(apn, "ok", null); return; }
       markAudit(apn, "diff", av, $("aMemoIn").value.trim());
       return;
     }
@@ -1681,8 +1693,8 @@
     var v = parseFloat($("countIn").value), memo = $("memoIn").value.trim();
     $("saveCheck").disabled = true;
     var r;
-    if (old) r = await sb.from("inv_checks").update({ counted_qty: v, memo: memo || null, dms_qty: p.crt_qty }).eq("id", old.id);
-    else r = await sb.from("inv_checks").insert({ item_cd: pn, item_nm: p.item_nm, lct_cd: p.lct_cd, dms_qty: p.crt_qty, counted_qty: v, memo: memo || null, checked_by: state.user.id });
+    if (old) r = await sb.from("inv_checks").update({ counted_qty: v, memo: memo || null, dms_qty: p.crt_qty, rr_qty: rrQty(pn) }).eq("id", old.id);
+    else r = await sb.from("inv_checks").insert({ item_cd: pn, item_nm: p.item_nm, lct_cd: p.lct_cd, dms_qty: p.crt_qty, rr_qty: rrQty(pn), counted_qty: v, memo: memo || null, checked_by: state.user.id });
     if (r.error) { toast("저장하지 못했습니다: " + r.error.message); $("saveCheck").disabled = false; return; }
     await loadChecks();
     closeSheet(); render(false);
@@ -1765,10 +1777,10 @@
   }
 
   function exportChecks() {
-    var rows = [["확인일시", "위치", "품번", "품명", "DMS 수량", "실사 수량", "차이", "확인자", "메모"]];
+    var rows = [["확인일시", "위치", "품번", "품명", "DMS 수량", "RR 수량", "실사 수량", "차이(실사-DMS-RR)", "확인자", "메모"]];
     state.checks.forEach(function (c) {
       var d = new Date(c.checked_at);
-      rows.push([d.toLocaleString("ko-KR"), c.lct_cd || "", c.item_cd, c.item_nm || "", qtyNum(c.dms_qty), qtyNum(c.counted_qty), qtyNum(c.counted_qty - c.dms_qty), c.checked_by_name || "", c.memo || ""]);
+      rows.push([d.toLocaleString("ko-KR"), c.lct_cd || "", c.item_cd, c.item_nm || "", qtyNum(c.dms_qty), qtyNum(Number(c.rr_qty) || 0), qtyNum(c.counted_qty), qtyNum(c.counted_qty - checkBase(c)), c.checked_by_name || "", c.memo || ""]);
     });
     var csv = "﻿" + rows.map(function (r) { return r.map(function (v) { v = String(v); return /[",\n]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v; }).join(","); }).join("\r\n");
     var a = document.createElement("a");
