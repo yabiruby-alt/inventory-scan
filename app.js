@@ -242,10 +242,47 @@
   });
 
   // ---------- 카메라 ----------
-  // 휴대폰에 내장 바코드 인식(BarcodeDetector, 주로 안드로이드 크롬)이 있으면 그걸 쓰고, 없으면(아이폰) ZXing 1D 전용 리더.
-  // 1D 바코드는 가로로 길고 가늘어서 해상도와 초점이 중요: 1080p 요청 + 연속 초점(지원 폰만)
+  // 인식 엔진 순서: ① 휴대폰 내장 BarcodeDetector(안드로이드 크롬) ② zxing-cpp WebAssembly(아이폰 등) ③ ZXing JS
+  // 1D 바코드는 가늘어서 영상을 줄이면 안 읽힘 → 원본 해상도에서 가운데 가로 띠를 잘라 해독, 가끔 전체 화면도 확인
   var ONE_D = ["code_128", "code_39", "code_93", "codabar", "ean_13", "ean_8", "itf", "upc_a", "upc_e"];
-  var cam = { stream: null, controls: null, timer: null, starting: false, error: null, torchOk: false, torchOn: false, engine: "" };
+  var POLYFILL_URL = "https://cdn.jsdelivr.net/npm/barcode-detector@3.2.2/ponyfill/+esm";
+  var ZXING_URLS = ["https://cdn.jsdelivr.net/npm/@zxing/library@0.23.0/umd/index.min.js",
+                    "https://cdn.jsdelivr.net/npm/@zxing/browser@0.2.1/umd/zxing-browser.min.js"];
+  var cam = { stream: null, timer: null, starting: false, error: null, torchOk: false, torchOn: false, engine: "", frame: 0 };
+  var detectorPromise = null;
+
+  function loadScript(src) {
+    return new Promise(function (res, rej) { var s = document.createElement("script"); s.src = src; s.onload = res; s.onerror = rej; document.head.appendChild(s); });
+  }
+  async function nativeDetector(Ctor) {
+    var sup = await Ctor.getSupportedFormats();
+    var fmts = ONE_D.filter(function (f) { return sup.indexOf(f) >= 0; });
+    if (fmts.indexOf("code_128") < 0) return null;
+    var d = new Ctor({ formats: fmts });
+    return function (src) { return d.detect(src).then(function (codes) { return codes.length ? codes[0].rawValue : null; }); };
+  }
+  function getDetector() {
+    if (detectorPromise) return detectorPromise;
+    detectorPromise = (async function () {
+      if ("BarcodeDetector" in window) {
+        try { var n = await nativeDetector(window.BarcodeDetector); if (n) return { name: "내장", detect: n }; } catch (e) { /* 다음 엔진 */ }
+      }
+      try {
+        var mod = await import(POLYFILL_URL);
+        var w = await nativeDetector(mod.BarcodeDetector);
+        if (w) return { name: "zxing-cpp", detect: w };
+      } catch (e) { /* 다음 엔진 */ }
+      for (var i = 0; i < ZXING_URLS.length; i++) await loadScript(ZXING_URLS[i]);
+      var F = ZXing.BarcodeFormat, H = ZXing.DecodeHintType, hints = new Map();
+      hints.set(H.POSSIBLE_FORMATS, [F.CODE_128, F.CODE_39, F.CODE_93, F.CODABAR, F.EAN_13, F.EAN_8, F.ITF, F.UPC_A, F.UPC_E]);
+      hints.set(H.TRY_HARDER, true);
+      var reader = new ZXingBrowser.BrowserMultiFormatOneDReader(hints);
+      return { name: "zxing-js", detect: function (canvas) { try { return Promise.resolve(reader.decodeFromCanvas(canvas).getText()); } catch (e) { return Promise.resolve(null); } } };
+    })();
+    detectorPromise.catch(function () { detectorPromise = null; });
+    return detectorPromise;
+  }
+
   function cameraWanted() {
     var host = $("scannerHost");
     return state.user && state.mode === "camera" && store.get("camera", true) && host && !host.hidden && document.visibilityState === "visible";
@@ -255,6 +292,14 @@
     if (cap) { cap.textContent = "인식: " + text; clearTimeout(cam.capTimer); cam.capTimer = setTimeout(function () { if (cap.isConnected) cap.textContent = "바코드를 가로로 맞추면 계속 읽습니다"; }, 2500); }
     resolve(text, true);
   }
+  var cropCanvas = document.createElement("canvas");
+  function grab(video, full) {
+    var w = video.videoWidth, h = video.videoHeight;
+    var bandH = full ? h : Math.round(h * 0.4);
+    cropCanvas.width = w; cropCanvas.height = bandH;
+    cropCanvas.getContext("2d", { willReadFrequently: true }).drawImage(video, 0, (h - bandH) / 2, w, bandH, 0, 0, w, bandH);
+    return cropCanvas;
+  }
   async function syncCamera() {
     if (!cameraWanted()) { stopCamera(); return; }
     if (cam.stream || cam.starting) return;
@@ -262,6 +307,7 @@
     if (!video) return;
     cam.starting = true; cam.error = null;
     try {
+      var detP = getDetector();   // 엔진 준비와 카메라 켜기를 동시에
       var stream = await navigator.mediaDevices.getUserMedia({
         audio: false,
         video: { facingMode: { ideal: "environment" }, width: { ideal: 1920 }, height: { ideal: 1080 } }
@@ -273,48 +319,32 @@
         if (caps.focusMode && caps.focusMode.indexOf("continuous") >= 0) await track.applyConstraints({ advanced: [{ focusMode: "continuous" }] });
         cam.torchOk = !!caps.torch;
       } catch (e) { /* 초점·플래시 설정을 지원하지 않는 폰 */ }
-
-      var native = null;
-      if ("BarcodeDetector" in window) {
-        try {
-          var sup = await window.BarcodeDetector.getSupportedFormats();
-          var fmts = ONE_D.filter(function (f) { return sup.indexOf(f) >= 0; });
-          if (fmts.indexOf("code_128") >= 0) native = new window.BarcodeDetector({ formats: fmts });
-        } catch (e) { native = null; }
-      }
-      if (native) {
-        cam.engine = "native";
-        video.srcObject = stream;
-        await video.play();
-        var busy = false;
-        cam.timer = setInterval(function () {
-          if (busy || video.readyState < 2) return;
-          busy = true;
-          native.detect(video).then(function (codes) {
-            busy = false;
-            if (codes && codes.length) onCameraRead(codes[0].rawValue);
-          }, function () { busy = false; });
-        }, 120);
-      } else {
-        cam.engine = "zxing";
-        var F = ZXing.BarcodeFormat, H = ZXing.DecodeHintType, hints = new Map();
-        hints.set(H.POSSIBLE_FORMATS, [F.CODE_128, F.CODE_39, F.CODE_93, F.CODABAR, F.EAN_13, F.EAN_8, F.ITF, F.UPC_A, F.UPC_E]);
-        hints.set(H.TRY_HARDER, true);
-        var reader = new ZXingBrowser.BrowserMultiFormatOneDReader(hints, { delayBetweenScanAttempts: 60, delayBetweenScanSuccess: 300 });
-        cam.controls = await reader.decodeFromStream(stream, video, function (result) { if (result) onCameraRead(result.getText()); });
-      }
+      video.srcObject = stream;
+      await video.play();
       if (cam.torchOk && $("torchBtn")) $("torchBtn").hidden = false;
+      var det = await detP;
+      cam.engine = det.name;
+      var busy = false;
+      cam.frame = 0;
+      cam.timer = setInterval(function () {
+        if (busy || !cam.stream || video.readyState < 2 || !video.videoWidth) return;
+        busy = true;
+        cam.frame++;
+        det.detect(grab(video, cam.frame % 4 === 0)).then(function (text) {
+          busy = false;
+          if (text) onCameraRead(text);
+        }, function () { busy = false; });
+      }, 100);
     } catch (e) {
       stopCamera();
       cam.error = e && e.name === "NotAllowedError" ? "카메라 권한이 꺼져 있습니다. 브라우저 설정에서 허용해 주세요."
-        : e && e.name === "NotFoundError" ? "카메라를 찾지 못했습니다." : "카메라를 켜지 못했습니다. (" + (e && e.name || "오류") + ")";
+        : e && e.name === "NotFoundError" ? "카메라를 찾지 못했습니다." : "카메라를 켜지 못했습니다. (" + (e && (e.name || e.message) || "오류") + ")";
       renderScanner();
     }
     cam.starting = false;
     if (!cameraWanted()) stopCamera();
   }
   function stopCamera() {
-    if (cam.controls) { try { cam.controls.stop(); } catch (e) { /* 이미 멈춤 */ } cam.controls = null; }
     if (cam.timer) { clearInterval(cam.timer); cam.timer = null; }
     if (cam.stream) { cam.stream.getTracks().forEach(function (t) { t.stop(); }); cam.stream = null; }
     cam.torchOn = false;
@@ -712,6 +742,7 @@
       '<div class="section-label">스캔</div>' +
       '<div class="group">' +
         '<div class="row"><div class="row-main">카메라 스캔</div><label class="switch"><input type="checkbox" id="optCam"' + (store.get("camera", true) ? " checked" : "") + ' aria-label="카메라 스캔"><i></i></label></div>' +
+        '<div class="row"><div class="row-main">카메라 인식 방식</div><span class="row-value">' + esc(cam.engine || "준비 전") + '</span></div>' +
         '<div class="row"><div class="row-main">스캔 성공 시 소리·진동</div><label class="switch"><input type="checkbox" id="optSound"' + (store.get("sound", true) ? " checked" : "") + ' aria-label="스캔 성공 시 소리"><i></i></label></div>' +
       '</div>' +
       '<p class="footnote">블루투스 스캐너는 휴대폰에 키보드로 연결하면 바로 쓸 수 있습니다.</p>' +
