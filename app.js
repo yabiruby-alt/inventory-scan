@@ -1053,7 +1053,7 @@
       '<button class="btn-primary" id="aOk" data-pn="' + esc(pn) + '">일치</button>' +
       '<button class="btn-ghost" id="aDiffToggle">수량 다름</button>' +
       '<div id="aDiffBox" hidden>' +
-        '<div class="group" style="margin-top:12px"><div class="row stepper"><div class="row-main">실사 수량</div><div class="stepper-ctl"><button type="button" data-astep="-1" aria-label="하나 빼기">−</button><input id="aCountIn" type="number" inputmode="numeric" min="0" value="' + qtyNum(it.status === "diff" ? it.counted : itemTotal(it)) + '" aria-label="실사 수량"><button type="button" data-astep="1" aria-label="하나 더하기">+</button></div></div>' +
+        '<div class="group" style="margin-top:12px"><div class="row stepper"><div class="row-main">실사 수량</div><div class="stepper-ctl"><button type="button" data-astep="-1" aria-label="하나 빼기">−</button><input id="aCountIn" type="text" inputmode="numeric" autocomplete="off" class="qty-in" value="' + qtyNum(it.status === "diff" ? it.counted : itemTotal(it)) + '" aria-label="실사 수량"><button type="button" data-astep="1" aria-label="하나 더하기">+</button></div></div>' +
         '<div class="row"><textarea class="field" id="aMemoIn" rows="2" placeholder="메모 (선택)" aria-label="메모"></textarea></div></div>' +
         '<button class="btn-primary" id="aDiffSave" data-pn="' + esc(pn) + '">수량 다름으로 저장</button>' +
       '</div>'
@@ -1315,7 +1315,7 @@
       if (!loc && !part) return "";
       var title = loc ? '<span class="row-title mono-loc">' + esc(r.code) + '</span>' : '<span class="pn">' + esc(r.code) + '</span>';
       var sub = loc ? "부품 " + partsAt(r.code).length + "종" : part.item_nm;
-      return '<button class="row" data-open="' + esc(r.code) + '"><span class="tag ' + (loc ? "loc" : "") + '">' + (loc ? "위치" : "부품") + '</span><div class="row-main">' + title + '<div class="row-sub">' + esc(sub) + '</div></div><span class="row-value" style="font-size:13px">' + r.time + '</span>' + CHEV + '</button>';
+      return '<button class="row" data-open="' + esc(r.code) + '"><span class="tag ' + (loc ? "loc" : "") + '">' + (loc ? "위치" : "부품") + '</span><div class="row-main">' + title + '<div class="row-sub">' + esc(sub) + '</div></div><span class="row-value" style="font-size:var(--fs-sm)">' + r.time + '</span>' + CHEV + '</button>';
     }).join("");
     return '<h1 class="large">최근 스캔</h1><p class="meta">이 휴대폰에서 스캔한 ' + state.recent.length + '건</p>' +
       (rows ? '<div class="group">' + rows + '</div><p class="footnote">누르면 스캔 화면에서 다시 조회합니다.</p>' : '<div class="empty">아직 스캔한 바코드가 없습니다</div>');
@@ -1520,8 +1520,65 @@
     var a = document.activeElement;
     if (a && $("sheet").contains(a)) a.blur();
     $("sheet").hidden = true; $("backdrop").hidden = true;
+    if (exitOpen) { exitOpen = false; armBack(); }
   }
   $("backdrop").addEventListener("click", closeSheet);
+
+  // 수량 입력칸: 누르면 커서를 숫자 뒤로 (앞에 있으면 고치기 어려움)
+  function caretEnd(el) { try { var n = el.value.length; el.setSelectionRange(n, n); } catch (e) { /* 지원 안 하는 입력칸 */ } }
+  document.addEventListener("focusin", function (e) {
+    var t = e.target;
+    if (!t.classList || !t.classList.contains("qty-in")) return;
+    t._focusAt = Date.now();
+    setTimeout(function () { caretEnd(t); }, 0);
+  });
+  document.addEventListener("click", function (e) {
+    var t = e.target;
+    // 처음 누를 때만 (이미 입력 중에 누른 자리는 그대로)
+    if (t.classList && t.classList.contains("qty-in") && Date.now() - (t._focusAt || 0) < 500) caretEnd(t);
+  });
+
+  // ---------- 휴대폰 뒤로가기 ----------
+  // 열린 창 닫기 → 화면 안의 '뒤로' → 마지막엔 종료 확인 (한 번에 앱 밖으로 나가지 않게)
+  var backGuard = false, exitOpen = false;
+  function armBack() {
+    if (backGuard || exitOpen) return;
+    try { history.pushState({ dsBack: 1 }, ""); backGuard = true; } catch (e) { /* 무시 */ }
+  }
+  // Chrome 은 사용자가 누른 뒤에 넣은 기록만 뒤로가기에 쓰므로, 누를 때마다 확인해서 넣어 둔다
+  document.addEventListener("click", armBack, true);
+  document.addEventListener("keydown", armBack, true);
+  window.addEventListener("popstate", function () {
+    if (!backGuard) return;
+    backGuard = false;
+    if ($("reportView")) { closeReport(); armBack(); return; }
+    if (!$("sheet").hidden) { closeSheet(); armBack(); return; }
+    var inPage = $("rBack") || $("movesBack") || $("auditBack");
+    if (inPage) { inPage.click(); armBack(); return; }
+    if (state.tab === "scan" && state.result.length) { state.result = []; render(true); armBack(); return; }
+    openExit();
+  });
+  function openExit() {
+    openSheet(
+      '<div class="sheet-head"><span></span><h2>앱 종료</h2><span></span></div>' +
+      '<p class="sheet-sub">DS재고 관리를 종료할까요?<br>뒤로 버튼을 한 번 더 누르면 종료됩니다.</p>' +
+      '<button class="btn-primary" id="exitYes" style="margin-top:0">종료</button>' +
+      '<button class="btn-ghost" id="exitNo">계속 사용</button>'
+    );
+    exitOpen = true;   // 지금은 기록 맨 앞 — 다음 뒤로가기는 그대로 앱 종료
+  }
+  function exitApp() {
+    exitOpen = false;
+    closeSheet();
+    history.back();
+    try { window.close(); } catch (e) { /* 무시 */ }
+    // 홈 화면 앱은 스크립트로 닫을 수 없는 경우가 있음
+    setTimeout(function () {
+      if (document.hidden) return;
+      exitOpen = true; toast("뒤로 버튼을 한 번 더 누르면 종료됩니다");
+      setTimeout(function () { exitOpen = false; }, 3000);   // 그 뒤로는 다시 확인
+    }, 400);
+  }
 
   function openCheck(pn) {
     var p = state.parts[pn], c = openChecksByItem()[pn], rr = rrQty(pn);
@@ -1531,10 +1588,10 @@
       '<div class="sheet-loc mono-loc">' + esc(p.lct_cd || "위치 없음") + '</div>' +
       '<p class="sheet-sub"><span class="pn">' + esc(pn) + '</span><br>' + esc(p.item_nm) + '</p>' +
       '<div class="group">' +
-        '<div class="row"><div class="row-main">DMS 수량</div><span class="row-value qty" style="font-size:18px">' + qtyNum(p.crt_qty) + '</span></div>' +
-        (rr ? '<div class="row"><div class="row-main">RR 수량</div><span class="row-value qty" style="font-size:18px">' + qtyNum(rr) + '</span></div>' +
-          '<div class="row"><div class="row-main">합계</div><span class="row-value qty" style="font-size:18px;font-weight:700">' + qtyNum(Number(p.crt_qty) + rr) + '</span></div>' : '') +
-        '<div class="row stepper"><div class="row-main">실사 수량</div><div class="stepper-ctl"><button type="button" data-step="-1" aria-label="하나 빼기">−</button><input id="countIn" type="number" inputmode="numeric" min="0" value="' + qtyNum(start) + '" aria-label="실사 수량"><button type="button" data-step="1" aria-label="하나 더하기">+</button></div></div>' +
+        '<div class="row"><div class="row-main">DMS 수량</div><span class="row-value qty" style="font-size:var(--fs-xl)">' + qtyNum(p.crt_qty) + '</span></div>' +
+        (rr ? '<div class="row"><div class="row-main">RR 수량</div><span class="row-value qty" style="font-size:var(--fs-xl)">' + qtyNum(rr) + '</span></div>' +
+          '<div class="row"><div class="row-main">합계</div><span class="row-value qty" style="font-size:var(--fs-xl);font-weight:700">' + qtyNum(Number(p.crt_qty) + rr) + '</span></div>' : '') +
+        '<div class="row stepper"><div class="row-main">실사 수량</div><div class="stepper-ctl"><button type="button" data-step="-1" aria-label="하나 빼기">−</button><input id="countIn" type="text" inputmode="numeric" autocomplete="off" class="qty-in" value="' + qtyNum(start) + '" aria-label="실사 수량"><button type="button" data-step="1" aria-label="하나 더하기">+</button></div></div>' +
         '<div class="row"><textarea class="field" id="memoIn" rows="2" placeholder="메모 (선택)" aria-label="메모">' + esc(c ? c.memo : "") + '</textarea></div>' +
       '</div>' +
       '<p class="footnote" id="diffHint"></p>' +
@@ -1601,6 +1658,8 @@
       state.result = [{ type: isLoc(oc) ? "loc" : "part", code: oc }];
       render(true); return;
     }
+    if (el.id === "exitYes") { exitApp(); return; }
+    if (el.id === "exitNo") { closeSheet(); return; }
     if (el.id === "rBack") { state.result.pop(); render(false); scrollToResult(); return; }
     if (el.id === "rClose") { state.result = []; render(true); return; }
     if (el.hasAttribute("data-sort")) {
@@ -1677,6 +1736,7 @@
       $("locList").innerHTML = locRows(sl, e.target.value);
     }
     if (e.target.id === "moveSearch") { state.moveQ = e.target.value; $("moveList").innerHTML = moveRows(); }
+    if (e.target.classList.contains("qty-in") && /[^0-9.]/.test(e.target.value)) e.target.value = e.target.value.replace(/[^0-9.]/g, "");   // 소수 수량(오일 등)은 그대로
     if (e.target.id === "countIn") updateHint(state.parts[$("saveCheck").getAttribute("data-pn")]);
     if (e.target.id === "newLoc") {
       var v = normCode(e.target.value), pn = $("saveMove").getAttribute("data-pn");
