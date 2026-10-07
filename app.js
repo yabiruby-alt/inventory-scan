@@ -32,7 +32,7 @@
     user: null,            // {id, name, login_id, role, branch}
     tab: "scan",
     result: [],            // 스캔 화면 아래 결과 이동 기록 (위치 → 부품)
-    mode: store.get("mode", "camera"),
+    mode: store.get("scanMode", "bt"),   // 블루투스 스캐너 우선 (카메라는 인식률 개선 전까지 보조)
     sort: "pn",
     parts: {},             // item_cd -> 현재고 행
     locs: {},              // lct_cd -> [item_cd]
@@ -582,7 +582,7 @@
 
   function renderScanner() {
     var host = $("scannerHost");
-    var mode = '<div class="vf-mode"><button class="' + (state.mode === "camera" ? "on" : "") + '" data-mode="camera">카메라</button><button class="' + (state.mode === "bt" ? "on" : "") + '" data-mode="bt">스캐너</button></div>';
+    var mode = '<div class="vf-mode"><button class="' + (state.mode === "bt" ? "on" : "") + '" data-mode="bt">스캐너</button><button class="' + (state.mode === "camera" ? "on" : "") + '" data-mode="camera">카메라</button></div>';
     var vf;
     if (state.mode === "camera" && store.get("camera", true)) {
       vf = '<div class="viewfinder cam" role="img" aria-label="카메라 스캔 화면"><video id="camVideo" playsinline muted autoplay></video>' +
@@ -672,14 +672,17 @@
 
   function rdcTile(pn) {
     var r = state.rdc[pn];
-    if (!r || r.status === "pending") {
+    if (!r) {
+      return '<div class="tile-label">RDC 재고</div><button class="btn-secondary rdc-btn" data-rdc-retry="' + esc(pn) + '">RDC 조회</button><div class="tile-foot">눌러서 DMS에서 조회</div>';
+    }
+    if (r.status === "pending") {
       return '<div class="tile-label">RDC 재고</div><div class="shimmer"></div><div class="tile-foot">' + (daemonStale() ? "DMS 연결 대기 중" : "DMS에서 조회 중") + '</div>';
     }
     if (r.status === "failed") {
       return '<div class="tile-label">RDC 재고</div><div class="rdc-err">' + esc(r.error || "조회 실패") + '</div><div class="tile-foot"><button class="btn-inline" data-rdc-retry="' + esc(pn) + '">다시 조회</button></div>';
     }
     var q = qtyNum(r.result && r.result.rdc_qty || 0);
-    return '<div class="tile-label">RDC 재고</div><div class="tile-num' + (q ? "" : " zero") + '">' + q.toLocaleString() + '<small>EA</small></div><div class="tile-foot">' + hhmm(r.at) + ' 조회</div>';
+    return '<div class="tile-label">RDC 재고</div><div class="tile-num' + (q ? "" : " zero") + '">' + q.toLocaleString() + '<small>EA</small></div><div class="tile-foot">' + hhmm(r.at) + ' 조회 · <button class="btn-inline" data-rdc-retry="' + esc(pn) + '">다시</button></div>';
   }
 
   function moveBanner(pn) {
@@ -693,7 +696,6 @@
   function viewPart(pn) {
     var p = state.parts[pn];
     var c = openChecksByItem()[pn];
-    requestRdc(pn);
     var moving = state.moves[pn] && state.moves[pn].status === "pending";
     return resultHead("부품", pn) +
       '<p class="meta" style="margin-bottom:12px">' + esc(p.item_nm) + '</p>' +
@@ -1113,7 +1115,7 @@
       render(true); return;
     }
     if (el.hasAttribute("data-close")) { closeSheet(); return; }
-    if (el.hasAttribute("data-mode")) { state.mode = el.getAttribute("data-mode"); store.set("mode", state.mode); cam.error = null; renderScanner(); return; }
+    if (el.hasAttribute("data-mode")) { state.mode = el.getAttribute("data-mode"); store.set("scanMode", state.mode); cam.error = null; renderScanner(); return; }
     if (el.hasAttribute("data-cam-retry")) { cam.error = null; renderScanner(); return; }
     if (el.id === "torchBtn") { toggleTorch(); return; }
     if (el.hasAttribute("data-zoom")) { setZoom(Number(el.getAttribute("data-zoom"))); return; }

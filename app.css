@@ -301,3 +301,5 @@ button.row:active, .row-btn:active { background: var(--fill); }
 .vf-flash { z-index: 4; }
 .vf-tool.photo { background: #fff; color: #000; }
 .viewfinder.cam .vf-tools { flex-wrap: wrap; justify-content: flex-end; max-width: calc(100% - 140px); }
+.rdc-btn { margin-top: 12px; align-self: flex-start; }
+.tile-foot .btn-inline { font-size: 12px; padding: 0; }
