@@ -438,10 +438,22 @@ function check(name, ok, extra) { results.push((ok ? 'PASS ' : 'FAIL ') + name +
   await back();
   const ex = await page.textContent('#sheet');
   check('뒤로가기 → 종료 확인 창', await page.isVisible('#exitYes') && ex.includes('종료할까요'), ex);
+  check('종료 확인 땐 기록 맨 앞 (다음 뒤로가기 = 종료)', (await page.evaluate(() => (history.state && history.state.dsBack) || 0)) === 0);
   await page.click('#exitNo');
   check('계속 사용 → 창 닫고 앱 그대로', await page.isHidden('#sheet') && await page.isVisible('#tabbar'));
+  check('누르면 뒤로 기록 3개 쌓임', (await page.evaluate(() => history.state && history.state.dsBack)) === 3);
   await back();
-  check('다시 뒤로가기 → 또 확인 창', await page.isVisible('#exitYes'));
+  check('다시 뒤로가기 → 또 확인 창 (남은 기록 정리)', await page.isVisible('#exitYes') && (await page.evaluate(() => (history.state && history.state.dsBack) || 0)) === 0);
+  await page.click('#exitNo');
+  // 화면을 다시 누르지 않고 연달아 뒤로가기: 결과 열기 → 뒤로(결과 닫힘) → 뒤로(확인 창)
+  await page.click('[data-tab="scan"]');
+  await page.fill('#manualInput', 'A140112');
+  await page.press('#manualInput', 'Enter');
+  await page.waitForSelector('#locList');
+  await back();
+  check('연속 뒤로 1: 결과 닫힘', !(await page.$('#locList')) && await page.isHidden('#sheet'));
+  await back();
+  check('연속 뒤로 2: 종료 확인 창 (바로 나가지 않음)', await page.isVisible('#exitYes'));
   await page.click('#exitNo');
 
   console.log(results.join('\n'));

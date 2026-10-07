@@ -1572,7 +1572,7 @@
     var a = document.activeElement;
     if (a && $("sheet").contains(a)) a.blur();
     $("sheet").hidden = true; $("backdrop").hidden = true;
-    if (exitOpen) { exitOpen = false; armBack(); }
+    if (exitOpen) { exitOpen = false; fillBack(); }
   }
   $("backdrop").addEventListener("click", closeSheet);
 
@@ -1592,23 +1592,35 @@
 
   // ---------- 휴대폰 뒤로가기 ----------
   // 열린 창 닫기 → 화면 안의 '뒤로' → 마지막엔 종료 확인 (한 번에 앱 밖으로 나가지 않게)
-  var backGuard = false, exitOpen = false;
-  function armBack() {
-    if (backGuard || exitOpen) return;
-    try { history.pushState({ dsBack: 1 }, ""); backGuard = true; } catch (e) { /* 무시 */ }
+  // Chrome 은 화면을 누르지 않은 상태에서 넣은 기록을 뒤로가기 때 건너뛰므로(→ 바로 종료),
+  // 누를 때마다 '뒤로' 기록을 BACK_DEPTH 개까지 미리 쌓아 두고, 뒤로가기 땐 새로 넣지 않고 하나씩 씀
+  var BACK_DEPTH = 3, exitOpen = false, exitUnwind = false;
+  function backDepth() { return (history.state && history.state.dsBack) || 0; }
+  function fillBack() {
+    if (exitOpen || exitUnwind) return;
+    var ua = navigator.userActivation;
+    if (ua && !ua.isActive) return;   // 스크립트가 누른 클릭 등은 제외 (건너뛰는 기록이 됨)
+    try { for (var d = backDepth(); d < BACK_DEPTH; d++) history.pushState({ dsBack: d + 1 }, ""); } catch (e) { /* 무시 */ }
   }
-  // Chrome 은 사용자가 누른 뒤에 넣은 기록만 뒤로가기에 쓰므로, 누를 때마다 확인해서 넣어 둔다
-  document.addEventListener("click", armBack, true);
-  document.addEventListener("keydown", armBack, true);
+  document.addEventListener("click", fillBack, true);
+  document.addEventListener("keydown", fillBack, true);
   window.addEventListener("popstate", function () {
-    if (!backGuard) return;
-    backGuard = false;
-    if ($("reportView")) { closeReport(); armBack(); return; }
-    if (!$("sheet").hidden) { closeSheet(); armBack(); return; }
-    var inPage = $("rBack") || $("movesBack") || $("auditBack");
-    if (inPage) { inPage.click(); armBack(); return; }
-    if (state.tab === "scan" && state.result.length) { state.result = []; render(true); armBack(); return; }
-    openExit();
+    var d = backDepth();
+    if (exitUnwind) { if (d === 0) { exitUnwind = false; openExit(); } return; }
+    if (exitOpen) return;
+    var closed = true;
+    if ($("reportView")) closeReport();
+    else if (!$("sheet").hidden) closeSheet();
+    else if ($("rBack") || $("movesBack") || $("auditBack")) ($("rBack") || $("movesBack") || $("auditBack")).click();
+    else if (state.tab === "scan" && state.result.length) { state.result = []; render(true); }
+    else closed = false;
+    if (closed) {
+      // 쌓아 둔 기록을 다 썼으면 하나 더 (다음에 화면을 누르면 다시 채워짐)
+      if (d === 0) try { history.pushState({ dsBack: 1 }, ""); } catch (e) { /* 무시 */ }
+      return;
+    }
+    // 닫을 게 없음 → 남은 기록을 정리해 맨 앞으로 간 뒤 종료 확인 (그 다음 뒤로가기 = 종료)
+    if (d > 0) { exitUnwind = true; history.go(-d); } else openExit();
   });
   function openExit() {
     openSheet(
