@@ -299,3 +299,5 @@ button.row:active, .row-btn:active { background: var(--fill); }
 .vf-tool.on { background: #fff; color: #000; }
 .vf-tool.on.torch { background: #FFD60A; }
 .vf-flash { z-index: 4; }
+.vf-tool.photo { background: #fff; color: #000; }
+.viewfinder.cam .vf-tools { flex-wrap: wrap; justify-content: flex-end; max-width: calc(100% - 140px); }
