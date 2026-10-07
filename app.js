@@ -241,37 +241,89 @@
     }
   });
 
-  // ---------- 카메라 (ZXing) ----------
-  var cam = { controls: null, starting: false, error: null };
+  // ---------- 카메라 ----------
+  // 휴대폰에 내장 바코드 인식(BarcodeDetector, 주로 안드로이드 크롬)이 있으면 그걸 쓰고, 없으면(아이폰) ZXing 1D 전용 리더.
+  // 1D 바코드는 가로로 길고 가늘어서 해상도와 초점이 중요: 1080p 요청 + 연속 초점(지원 폰만)
+  var ONE_D = ["code_128", "code_39", "code_93", "codabar", "ean_13", "ean_8", "itf", "upc_a", "upc_e"];
+  var cam = { stream: null, controls: null, timer: null, starting: false, error: null, torchOk: false, torchOn: false, engine: "" };
   function cameraWanted() {
     var host = $("scannerHost");
     return state.user && state.mode === "camera" && store.get("camera", true) && host && !host.hidden && document.visibilityState === "visible";
   }
+  function onCameraRead(text) {
+    var cap = document.querySelector(".vf-caption");
+    if (cap) { cap.textContent = "인식: " + text; clearTimeout(cam.capTimer); cam.capTimer = setTimeout(function () { if (cap.isConnected) cap.textContent = "바코드를 가로로 맞추면 계속 읽습니다"; }, 2500); }
+    resolve(text, true);
+  }
   async function syncCamera() {
-    if (cameraWanted()) {
-      if (cam.controls || cam.starting) return;
-      var video = $("camVideo");
-      if (!video) return;
-      cam.starting = true; cam.error = null;
+    if (!cameraWanted()) { stopCamera(); return; }
+    if (cam.stream || cam.starting) return;
+    var video = $("camVideo");
+    if (!video) return;
+    cam.starting = true; cam.error = null;
+    try {
+      var stream = await navigator.mediaDevices.getUserMedia({
+        audio: false,
+        video: { facingMode: { ideal: "environment" }, width: { ideal: 1920 }, height: { ideal: 1080 } }
+      });
+      cam.stream = stream;
+      var track = stream.getVideoTracks()[0];
       try {
-        var reader = new ZXingBrowser.BrowserMultiFormatReader();
-        cam.controls = await reader.decodeFromConstraints(
-          { video: { facingMode: { ideal: "environment" }, width: { ideal: 1280 }, height: { ideal: 720 } } },
-          video,
-          function (result) { if (result) resolve(result.getText(), true); }
-        );
-      } catch (e) {
-        cam.error = e && e.name === "NotAllowedError" ? "카메라 권한이 꺼져 있습니다. 브라우저 설정에서 허용해 주세요." : "카메라를 켜지 못했습니다.";
-        renderScanner();
+        var caps = track.getCapabilities ? track.getCapabilities() : {};
+        if (caps.focusMode && caps.focusMode.indexOf("continuous") >= 0) await track.applyConstraints({ advanced: [{ focusMode: "continuous" }] });
+        cam.torchOk = !!caps.torch;
+      } catch (e) { /* 초점·플래시 설정을 지원하지 않는 폰 */ }
+
+      var native = null;
+      if ("BarcodeDetector" in window) {
+        try {
+          var sup = await window.BarcodeDetector.getSupportedFormats();
+          var fmts = ONE_D.filter(function (f) { return sup.indexOf(f) >= 0; });
+          if (fmts.indexOf("code_128") >= 0) native = new window.BarcodeDetector({ formats: fmts });
+        } catch (e) { native = null; }
       }
-      cam.starting = false;
-      if (!cameraWanted()) stopCamera();
-    } else {
+      if (native) {
+        cam.engine = "native";
+        video.srcObject = stream;
+        await video.play();
+        var busy = false;
+        cam.timer = setInterval(function () {
+          if (busy || video.readyState < 2) return;
+          busy = true;
+          native.detect(video).then(function (codes) {
+            busy = false;
+            if (codes && codes.length) onCameraRead(codes[0].rawValue);
+          }, function () { busy = false; });
+        }, 120);
+      } else {
+        cam.engine = "zxing";
+        var F = ZXing.BarcodeFormat, H = ZXing.DecodeHintType, hints = new Map();
+        hints.set(H.POSSIBLE_FORMATS, [F.CODE_128, F.CODE_39, F.CODE_93, F.CODABAR, F.EAN_13, F.EAN_8, F.ITF, F.UPC_A, F.UPC_E]);
+        hints.set(H.TRY_HARDER, true);
+        var reader = new ZXingBrowser.BrowserMultiFormatOneDReader(hints, { delayBetweenScanAttempts: 60, delayBetweenScanSuccess: 300 });
+        cam.controls = await reader.decodeFromStream(stream, video, function (result) { if (result) onCameraRead(result.getText()); });
+      }
+      if (cam.torchOk && $("torchBtn")) $("torchBtn").hidden = false;
+    } catch (e) {
       stopCamera();
+      cam.error = e && e.name === "NotAllowedError" ? "카메라 권한이 꺼져 있습니다. 브라우저 설정에서 허용해 주세요."
+        : e && e.name === "NotFoundError" ? "카메라를 찾지 못했습니다." : "카메라를 켜지 못했습니다. (" + (e && e.name || "오류") + ")";
+      renderScanner();
     }
+    cam.starting = false;
+    if (!cameraWanted()) stopCamera();
   }
   function stopCamera() {
     if (cam.controls) { try { cam.controls.stop(); } catch (e) { /* 이미 멈춤 */ } cam.controls = null; }
+    if (cam.timer) { clearInterval(cam.timer); cam.timer = null; }
+    if (cam.stream) { cam.stream.getTracks().forEach(function (t) { t.stop(); }); cam.stream = null; }
+    cam.torchOn = false;
+  }
+  function toggleTorch() {
+    if (!cam.stream) return;
+    cam.torchOn = !cam.torchOn;
+    cam.stream.getVideoTracks()[0].applyConstraints({ advanced: [{ torch: cam.torchOn }] }).catch(function () { cam.torchOn = false; });
+    if ($("torchBtn")) $("torchBtn").classList.toggle("on", cam.torchOn);
   }
   document.addEventListener("visibilitychange", syncCamera);
 
@@ -280,7 +332,8 @@
     var mode = '<div class="vf-mode"><button class="' + (state.mode === "camera" ? "on" : "") + '" data-mode="camera">카메라</button><button class="' + (state.mode === "bt" ? "on" : "") + '" data-mode="bt">스캐너</button></div>';
     var vf;
     if (state.mode === "camera" && store.get("camera", true)) {
-      vf = '<div class="viewfinder" role="img" aria-label="카메라 스캔 화면"><video id="camVideo" playsinline muted></video>' + mode +
+      vf = '<div class="viewfinder" role="img" aria-label="카메라 스캔 화면"><video id="camVideo" playsinline muted autoplay></video>' + mode +
+        '<button class="torch" id="torchBtn" hidden aria-label="플래시">플래시</button>' +
         (cam.error ? '<div class="vf-off"><div>' + esc(cam.error) + '<br><button data-cam-retry>다시 시도</button></div></div>'
           : '<div class="vf-frame"><span></span><span></span><span></span><span></span></div><div class="vf-line"></div><div class="vf-caption">바코드를 가로로 맞추면 계속 읽습니다</div>') +
         '</div>';
@@ -804,6 +857,7 @@
     if (el.hasAttribute("data-close")) { closeSheet(); return; }
     if (el.hasAttribute("data-mode")) { state.mode = el.getAttribute("data-mode"); store.set("mode", state.mode); cam.error = null; renderScanner(); return; }
     if (el.hasAttribute("data-cam-retry")) { cam.error = null; renderScanner(); return; }
+    if (el.id === "torchBtn") { toggleTorch(); return; }
     if (el.hasAttribute("data-go")) {
       var code = el.getAttribute("data-go");
       state.result.push({ type: isLoc(code) ? "loc" : "part", code: code });
