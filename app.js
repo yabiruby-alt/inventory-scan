@@ -74,11 +74,17 @@
   function isLoc(code) { return looksLoc(code) && !!state.locs[code]; }
   function partsAt(loc) { return (state.locs[loc] || []).map(function (k) { return state.parts[k]; }); }
   function basis() { return state.status && state.status.parts_at ? hhmm(state.status.parts_at) : "--:--"; }
-  // BMW DMS 데몬 (dms 생략) / RR DMS 데몬 ("rr")
-  function daemonStale(dms) {
-    var at = state.status && state.status[dms === "rr" ? "rr_seen_at" : "daemon_seen_at"];
-    if (!at) return true;
-    return Date.now() - new Date(at).getTime() > DAEMON_STALE_MS;
+  function daemonStale() {
+    if (!state.status || !state.status.daemon_seen_at) return true;
+    return Date.now() - new Date(state.status.daemon_seen_at).getTime() > DAEMON_STALE_MS;
+  }
+  // RR 현재고 문제: 데몬이 RR 을 못 올렸으면 그 이유, 25분 넘게 안 올라왔으면 오래됨
+  var RR_STALE_MS = 25 * 60000;
+  function rrProblem() {
+    var s = state.status || {};
+    if (s.rr_error) return s.rr_error;
+    if (s.rr_parts_at && Date.now() - new Date(s.rr_parts_at).getTime() > RR_STALE_MS) return "RR 현재고가 오래됨";
+    return "";
   }
   var CHEV = '<svg class="chev" viewBox="0 0 8 13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1.5 1.5l5 5-5 5"/></svg>';
   var BACK = '<svg viewBox="0 0 12 20" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M10 2L2 10l8 8"/></svg>';
@@ -786,11 +792,11 @@
   function rrBasis() { return state.status && state.status.rr_parts_at ? hhmm(state.status.rr_parts_at) : null; }
   function rrTile(pn) {
     var label = '<div class="tile-label">RR 재고</div>', at = rrBasis();
-    if (!at) return label + '<div class="tile-num zero">-</div><div class="tile-foot">RR 데몬이 아직 올리지 않음</div>';
+    if (!at) return label + '<div class="tile-num zero">-</div><div class="tile-foot">' + esc(rrProblem() || "아직 올라오지 않음") + '</div>';
     var p = state.rrParts[pn], q = qtyNum(p ? p.crt_qty : 0);
     return label + '<div class="tile-num' + (q ? "" : " zero") + '">' + q.toLocaleString() + '<small>EA</small></div>' +
       '<div class="tile-foot">' + (p ? (p.lct_cd ? '<span class="mono-loc">' + esc(p.lct_cd) + '</span> · ' : '') : 'RR 부품창고에 없음 · ') +
-      at + ' 기준' + (daemonStale("rr") ? ' · <span style="color:var(--danger)">RR 연결 PC 응답 없음</span>' : '') + '</div>';
+      at + ' 기준' + (rrProblem() ? ' · <span style="color:var(--danger)">갱신 안 됨</span>' : '') + '</div>';
   }
 
   function moveBanner(pn) {
@@ -1257,9 +1263,9 @@
       '<div class="group">' +
         '<div class="row"><div class="row-main">현재고 기준 시각</div><span class="row-value">' + basis() + '</span></div>' +
         '<div class="row"><div class="row-main">부품창고 품목</div><span class="row-value">' + Object.keys(state.parts).length.toLocaleString() + '건</span></div>' +
-        '<div class="row"><div class="row-main">BMW DMS 연결 PC</div><span class="row-value">' + (daemonStale() ? '<span style="color:var(--danger)">응답 없음</span>' : '<span class="dot" style="display:inline-block;margin-right:6px"></span>연결됨 · ' + hhmm(s.daemon_seen_at)) + '</span></div>' +
+        '<div class="row"><div class="row-main">DMS 연결 PC</div><span class="row-value">' + (daemonStale() ? '<span style="color:var(--danger)">응답 없음</span>' : '<span class="dot" style="display:inline-block;margin-right:6px"></span>연결됨 · ' + hhmm(s.daemon_seen_at)) + '</span></div>' +
         '<div class="row"><div class="row-main">RR 현재고 기준 시각</div><span class="row-value">' + (rrBasis() || "-") + ' · ' + Object.keys(state.rrParts).length.toLocaleString() + '건</span></div>' +
-        '<div class="row"><div class="row-main">RR DMS 연결 PC</div><span class="row-value">' + (daemonStale("rr") ? '<span style="color:var(--danger)">응답 없음</span>' : '<span class="dot" style="display:inline-block;margin-right:6px"></span>연결됨 · ' + hhmm(s.rr_seen_at)) + '</span></div>' +
+        (rrProblem() ? '<div class="row"><div class="row-main">RR 현재고 문제</div></div><p class="footnote" style="color:var(--danger);margin:0;padding:0 16px 12px">' + esc(rrProblem()) + '</p>' : '') +
         '<div class="row"><div class="row-main">제외</div><span class="row-value">Z 서비스 코드</span></div>' +
       '</div>' +
       '<div class="section-label">기록</div>' +

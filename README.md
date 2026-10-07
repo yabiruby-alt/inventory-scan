@@ -20,17 +20,14 @@
 `daemon/config.example.json` 을 `daemon/config.local.json` 으로 복사하고 데몬 전용 계정 비밀번호를 넣는다.
 `config.local.json` 은 깃허브에 올라가지 않는다.
 
-## RR DMS 데몬
-BMW DMS 데몬과 따로 RR DMS 데몬이 켜져 있다. RR 데몬은 BMW 데몬처럼 10분마다 RR DMS 부품창고 현재고를 `inv_rr_parts` 로 올리고,
-앱은 부품 화면의 "RR 재고"에 바로 보여 준다 (조회 버튼·RDC 조회 없음).
-1. RR 데몬용 계정: Supabase 대시보드 → Authentication → Add user (예: `inventory-daemon-rr@tablet.dongsung.local`) 후
-   ```sql
-   insert into public.inv_daemons (user_id, branch, dms)
-   select id, '해운대', 'rr' from auth.users where email = 'inventory-daemon-rr@tablet.dongsung.local';
-   ```
-2. RR 데몬도 `daemon/stockapp.py` 를 읽게 하고, 설정 파일에 `"dms": "rr"` 와 위 계정을 넣는다.
-   BMW 데몬과 같은 폴더를 쓰면 RR 쪽은 환경 변수 `STOCKAPP_CONFIG=config.rr.local.json` 으로 다른 설정 파일을 지정.
-3. RR 데몬은 `on_cycle` 에서 받은 부품창고 현재고(`pw_rows`)만 올리고, BMW 현재고·재고조사 목록·요청 처리는 하지 않는다 (DB 권한으로도 막혀 있음).
+## RR(롤스로이스) 재고
+파츠베이 데몬(`partsbay.py`, 저장소 `dsparts-hd`)은 BMW DMS 창과 함께 RR DMS 창(`rr_page`)도 띄워 둔다.
+10분 주기에 `stockapp.on_cycle` 이 그 RR 창으로 RR 부품창고 현재고를 받아 `inv_rr_parts` 로 올리고,
+앱은 부품 화면의 "RR 재고"에 바로 보여 준다 (조회 버튼·RDC 조회 없음). 별도 RR 데몬·계정은 없다.
+- `partsbay.py` 는 고치지 않음: `on_cycle` 을 부른 `run_cycle(page, rr_page)` 의 `rr_page` 를 그대로 씀
+- RR 지점 코드는 RR 현재고 화면 검색칸 값을 씀. 안 되면 `config.local.json` 에 `"rr": {"corp_cd", "biz_area_cd", "brch_cd"}`
+- RR 을 못 올리면(로그인 필요 등) 기존 RR 현재고는 그대로 두고, 이유를 `inv_status.rr_error` 에 남겨 앱 설정 화면에 표시
+- RR 이 실패해도 BMW 업로드에는 영향 없음
 
 ## DMS 위치 변경
 재고마스터 화면에서 사람이 하는 순서 그대로 처리한다 (조회 → 줄 선택 → 로케이션코드만 수정 → 저장).

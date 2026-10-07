@@ -52,7 +52,7 @@ function check(name, ok, extra) { results.push((ok ? 'PASS ' : 'FAIL ') + name +
   ];
   let checks = [], nextCheckId = 1;
   let failAuditPatch = false;
-  let rrSeen = true, rrPartsAt = iso(now - 120000);
+  let rrErr = null, rrPartsAt = iso(now - 120000);
   const reqPosts = [];
   const rrParts = [
     { item_cd: 'PN10000', item_nm: 'RR부품', lct_cd: 'R010101', crt_qty: 4 },
@@ -73,7 +73,7 @@ function check(name, ok, extra) { results.push((ok ? 'PASS ' : 'FAIL ') + name +
     if (m === 'OPTIONS') return route.fulfill({ status: 200, headers: { 'access-control-allow-origin': '*', 'access-control-allow-headers': '*', 'access-control-allow-methods': '*' } });
     if (u.pathname.startsWith('/auth/')) return json({});
     if (t === 'profiles') return json({ id: USER.id, login_id: 't', name: '시험', role: 'staff', branch: '해운대', active: true, must_change_password: false });
-    if (t === 'inv_status') return json({ branch: '해운대', parts_at: partsAt, daemon_seen_at: iso(Date.now() + 3600000), rr_seen_at: rrSeen ? iso(Date.now() + 3600000) : null, rr_parts_at: rrPartsAt });   // 페이지 시계를 앞으로 돌려도 '방금 응답'으로 보이게
+    if (t === 'inv_status') return json({ branch: '해운대', parts_at: partsAt, daemon_seen_at: iso(Date.now() + 3600000), rr_parts_at: rrPartsAt, rr_error: rrErr });   // 페이지 시계를 앞으로 돌려도 '방금 응답'으로 보이게
     if (t === 'inv_parts') {
       if (m === 'HEAD') return route.fulfill({ status: 200, headers: { 'content-range': '*/' + parts.length, 'access-control-allow-origin': '*', 'access-control-expose-headers': 'content-range' } });
       const gte = u.searchParams.get('updated_at');
@@ -212,11 +212,15 @@ function check(name, ok, extra) { results.push((ok ? 'PASS ' : 'FAIL ') + name +
   await page.clock.fastForward(61000); await page.waitForTimeout(400);
   const rr9 = await page.textContent('#rrTile');
   check('RR 데몬이 새로 올리면 반영', rr9.includes('9') && rr9.includes('R030303'), rr9);
-  rrSeen = false;
+  rrErr = 'RR DMS 메뉴를 열지 못했습니다 — RR DMS 로그인 확인 필요';
   await page.clock.fastForward(61000); await page.waitForTimeout(300);
   const rrS = await page.textContent('#rrTile');
-  check('RR 데몬 꺼지면 표시', rrS.includes('RR 연결 PC 응답 없음'), rrS);
-  rrSeen = true;
+  check('RR 을 못 올리면 "갱신 안 됨"', rrS.includes('갱신 안 됨') && rrS.includes('9'), rrS);
+  await page.click('[data-tab="settings"]');
+  const stE = await page.textContent('#view');
+  check('설정에 RR 실패 이유', stE.includes('RR DMS 로그인 확인 필요'), '');
+  await page.click('[data-tab="scan"]');
+  rrErr = null;
   await page.clock.fastForward(61000); await page.waitForTimeout(300);
   await page.fill('#manualInput', 'QQ12345');
   await page.press('#manualInput', 'Enter');
@@ -226,7 +230,7 @@ function check(name, ok, extra) { results.push((ok ? 'PASS ' : 'FAIL ') + name +
   await page.click('[data-close]');
   await page.click('[data-tab="settings"]');
   const st = await page.textContent('#view');
-  check('설정에 RR 기준 시각·연결 상태', st.includes('RR 현재고 기준 시각') && st.includes('RR DMS 연결 PC') && st.includes('BMW DMS 연결 PC'), '');
+  check('설정에 RR 기준 시각, 문제 없으면 이유 안 보임', st.includes('RR 현재고 기준 시각') && !st.includes('RR 현재고 문제'), '');
 
   // ===== 데몬 멈춤 안내가 스캐너 영역에 갱신 =====
   await page.click('[data-tab="scan"]');
