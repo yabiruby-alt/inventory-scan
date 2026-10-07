@@ -1,4 +1,12 @@
-<title>해운대 재고조사</title>
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="theme-color" content="#F2F2F7" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#000000" media="(prefers-color-scheme: dark)"><title>해운대 재고조사</title>
 <style>
 /* 레이아웃: 휴대폰 한 화면 앱. 상단 내비 + 스크롤 본문 + 하단 탭바, iOS 그룹 리스트 구조 */
 :root {
@@ -56,7 +64,7 @@ button { background: none; border: 0; padding: 0; cursor: pointer; text-align: i
 @media (min-width: 480px) { .app { border-inline: 1px solid var(--sep); } }
 
 /* 내비게이션 바 */
-.nav { flex: none; display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; height: 44px; padding-inline: 8px; background: var(--bar); backdrop-filter: saturate(180%) blur(20px); -webkit-backdrop-filter: saturate(180%) blur(20px); border-bottom: 0.5px solid transparent; z-index: 5; }
+.nav { flex: none; display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; height: calc(44px + env(safe-area-inset-top, 0px)); padding-top: env(safe-area-inset-top, 0px); padding-inline: 8px; background: var(--bar); backdrop-filter: saturate(180%) blur(20px); -webkit-backdrop-filter: saturate(180%) blur(20px); border-bottom: 0.5px solid transparent; z-index: 5; }
 .nav.scrolled { border-bottom-color: var(--sep); }
 .nav-back { display: inline-flex; align-items: center; gap: 2px; color: var(--accent); font-size: 17px; height: 44px; padding-right: 8px; justify-self: start; }
 .nav-back svg { width: 12px; height: 20px; }
@@ -223,7 +231,8 @@ button.row:active, .row-btn:active { background: var(--fill); }
 .idle-title { margin: 0; font-size: 17px; font-weight: 600; color: var(--label); }
 .idle-sub { margin: 4px 0 0; font-size: 15px; }
 </style>
-
+</head>
+<body>
 <div class="app" id="app">
   <header class="nav" id="nav"></header>
   <main class="content" id="content"></main>
@@ -704,3 +713,5 @@ button.row:active, .row-btn:active { background: var(--fill); }
   render(true);
 })();
 </script>
+</body>
+</html>
