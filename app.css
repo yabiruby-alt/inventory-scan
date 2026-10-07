@@ -141,6 +141,7 @@ button.row:active, .row-btn:active { background: var(--fill); }
 
 /* 부품 재고 */
 .stock { display: grid; grid-template-columns: 1.55fr 1fr; gap: 10px; }
+.stock > .tile:first-child { grid-row: span 2; }   /* 지점 현재고 왼쪽 크게, 오른쪽에 RR·RDC */
 .tile { background: var(--surface); border-radius: var(--r); padding: 14px 16px 14px; display: flex; flex-direction: column; min-width: 0; }
 .tile-label { font-size: 13px; color: var(--label2); }
 .tile-num { font-size: 52px; line-height: 1.05; font-weight: 700; letter-spacing: -0.03em; font-variant-numeric: tabular-nums; margin-top: 4px; }

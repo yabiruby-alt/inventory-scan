@@ -8,9 +8,16 @@ DMS 세션은 데몬 것 하나만 쓴다 (같은 계정으로 세션을 두 개
 
 설정: 같은 폴더의 config.local.json (깃허브에 올리지 않음)
   {"url": "...", "key": "sb_publishable_...", "email": "inventory-daemon@tablet.dongsung.local",
-   "password": "...", "branch": "해운대", "dealer_cd": "001672", "brch_cd": "15"}
+   "password": "...", "branch": "해운대", "dealer_cd": "001672", "brch_cd": "15", "dms": "bmw"}
+
+BMW DMS 데몬과 RR DMS 데몬이 따로 켜져 있음:
+  "dms": "bmw" (기본)  현재고·재고조사 목록 업로드, RDC 조회, 현재고 조회, 위치 변경
+  "dms": "rr"          RR 조회만 (RR DMS 부품창고 재고). BMW 현재고·목록은 올리지 않음
+  두 데몬이 같은 폴더를 쓰면 RR 쪽은 환경 변수 STOCKAPP_CONFIG=config.rr.local.json 처럼 다른 설정 파일을 지정
 """
+import inspect
 import json
+import os
 import re
 import sys
 import time
@@ -22,7 +29,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
-CONFIG = HERE / "config.local.json"
+CONFIG = HERE / os.environ.get("STOCKAPP_CONFIG", "config.local.json")
 LOC_HALT = HERE / "LOC_CHANGE_HALT.txt"   # 이 파일이 있으면 위치 변경을 멈춤 (이상 감지 시 자동 생성)
 
 POLL_EVERY_SEC = 3
@@ -52,6 +59,10 @@ def _log(msg: str) -> None:
 
 def _cfg() -> dict:
     return json.loads(CONFIG.read_text(encoding="utf-8"))
+
+
+def _dms() -> str:
+    return _cfg().get("dms", "bmw")
 
 
 def _now_iso() -> str:
@@ -162,7 +173,9 @@ def _list_items(rows: list) -> list:
 def on_cycle(page, ctx: dict) -> None:
     """ctx: pw_rows(부품창고 현재고 원본), stockcheck, stockcheck_week, today(YYYY-MM-DD)"""
     if not CONFIG.exists():
-        _log("config.local.json 이 없어 건너뜀")
+        _log(f"{CONFIG.name} 이 없어 건너뜀")
+        return
+    if _dms() != "bmw":   # RR 데몬은 BMW 현재고·조사 목록을 올리지 않음 (DB 권한으로도 막혀 있음)
         return
     if not _ensure_token():
         return
@@ -228,8 +241,10 @@ def poll(page) -> None:
             return
         branch = _cfg()["branch"]
         if t - _S.last_beat >= HEARTBEAT_EVERY_SEC:
-            _rest("PATCH", f"inv_status?branch=eq.{_q(branch)}", {"daemon_seen_at": _now_iso()})
+            seen = "rr_seen_at" if _dms() == "rr" else "daemon_seen_at"
+            _rest("PATCH", f"inv_status?branch=eq.{_q(branch)}", {seen: _now_iso()})
             _S.last_beat = t
+        # 아래 요청 조회·정리는 DB 권한으로 자기 DMS 요청만 보임 (BMW: rr 말고 전부 / RR: rr 만)
         # 데몬이 멈춘 동안 쌓인 요청은 버림 (늦게 실행된 위치 변경이 DMS를 바꾸지 않게)
         cutoff = _q(datetime.fromtimestamp(t - REQ_EXPIRE_SEC, timezone.utc).isoformat())
         _rest("PATCH", f"inv_requests?branch=eq.{_q(branch)}&status=eq.pending&requested_at=lt.{cutoff}",
@@ -258,7 +273,11 @@ def _handle(page, branch: str, req: dict) -> None:
     try:
         if not re.fullmatch(r"[A-Z0-9]{5,20}", pn) or pn.startswith("Z"):
             raise ValueError(f"품번 형식이 아닙니다: {pn}")
-        if kind in ("rdc", "stock"):
+        if (kind == "rr") != (_dms() == "rr"):
+            raise ValueError(f"이 데몬({_dms()})이 처리하는 요청이 아닙니다: {kind}")
+        if kind == "rr":
+            result = _lookup_rr(page, pn)
+        elif kind in ("rdc", "stock"):
             result = _lookup(page, branch, pn, update_part=(kind == "stock"))
         elif kind == "loc_change":
             result = _loc_change(page, branch, pn, req.get("params") or {}, req.get("requested_by_name"))
@@ -293,6 +312,31 @@ def _lookup(page, branch: str, pn: str, update_part: bool) -> dict:
               "resolution=merge-duplicates,return=minimal")
         _S.parts_sent[pn] = row
     return result
+
+
+def _lookup_rr(page, pn: str) -> dict:
+    """RR DMS 부품창고 재고 (RDC 조회 없이)"""
+    import __main__ as pb
+    # partsbay.py 에 부품창고만 조회하는 lookup_own_stock(page, pn) -> [행] 이 있으면 그걸 씀.
+    # 없으면 lookup_stock 결과에서 부품창고 쪽만 씀 (이 경우 partsbay 안에서 RDC 조회도 함께 돌아감)
+    if hasattr(pb, "lookup_own_stock"):
+        rows = pb.lookup_own_stock(page, pn) or []
+    else:
+        params = inspect.signature(pb.lookup_stock).parameters
+        raw = pb.lookup_stock(page, pn, rdc=False) if "rdc" in params else pb.lookup_stock(page, pn)
+        if raw.get("own_error"):
+            raise RuntimeError(f"RR DMS 조회 실패: {raw['own_error']}")
+        rows = raw.get("own") or []
+    own_rows = [r for r in rows if r.get("strgNm") == "부품창고" and r.get("itemCd") == pn]
+    own = own_rows[0] if own_rows else None
+    return {
+        "found": own is not None,
+        "crt_qty": _num(own.get("crtQty")) if own else 0,
+        "able_qty": _num(own.get("ableQty")) if own else 0,
+        "lct_cd": ((own.get("lctCd") or "").strip() if own else "") or None,
+        "item_nm": own.get("itemNm") if own else None,
+        "checked_at": _now_iso(),
+    }
 
 
 # ---- 위치 변경: 재고마스터 화면에서 사람이 하는 순서 그대로 (조회 → 줄 선택 → 로케이션코드만 수정 → 저장) ----

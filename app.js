@@ -41,6 +41,7 @@
     locs: {},              // lct_cd -> [item_cd]
     status: null,          // inv_status
     rdc: {},               // item_cd -> {status, result, error, at}
+    rr: {},                // item_cd -> {status, result, error, at} (RR DMS 부품창고)
     moves: {},             // item_cd -> {from, to, status, error, time, reqId}
     checks: [],            // 지우지 않은 체크 기록
     recent: store.get("recent", []),
@@ -73,9 +74,11 @@
   function isLoc(code) { return looksLoc(code) && !!state.locs[code]; }
   function partsAt(loc) { return (state.locs[loc] || []).map(function (k) { return state.parts[k]; }); }
   function basis() { return state.status && state.status.parts_at ? hhmm(state.status.parts_at) : "--:--"; }
-  function daemonStale() {
-    if (!state.status || !state.status.daemon_seen_at) return true;
-    return Date.now() - new Date(state.status.daemon_seen_at).getTime() > DAEMON_STALE_MS;
+  // BMW DMS 데몬 (dms 생략) / RR DMS 데몬 ("rr")
+  function daemonStale(dms) {
+    var at = state.status && state.status[dms === "rr" ? "rr_seen_at" : "daemon_seen_at"];
+    if (!at) return true;
+    return Date.now() - new Date(at).getTime() > DAEMON_STALE_MS;
   }
   var CHEV = '<svg class="chev" viewBox="0 0 8 13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1.5 1.5l5 5-5 5"/></svg>';
   var BACK = '<svg viewBox="0 0 12 20" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M10 2L2 10l8 8"/></svg>';
@@ -210,13 +213,14 @@
 
   // ---------- 데몬 요청 ----------
   // 데몬이 멈췄으면 요청을 쌓지 않음 (나중에 한꺼번에 처리되지 않게). 상태가 오래됐을 수 있어 한 번 다시 확인
-  async function daemonReady() {
-    if (!daemonStale()) return true;
+  async function daemonReady(dms) {
+    if (!daemonStale(dms)) return true;
     await loadStatus();
-    return !daemonStale();
+    return !daemonStale(dms);
   }
   async function sendRequest(kind, pn, params) {
-    if (!(await daemonReady())) throw new Error("DMS 연결 PC가 응답하지 않습니다");
+    var dms = kind === "rr" ? "rr" : "";
+    if (!(await daemonReady(dms))) throw new Error((dms ? "RR " : "") + "DMS 연결 PC가 응답하지 않습니다");
     var r = await sb.from("inv_requests").insert({ kind: kind, item_cd: pn, params: params || {} }).select("id").single();
     if (r.error) throw r.error;
     return r.data.id;
@@ -254,6 +258,26 @@
     }).catch(function (e) {
       state.rdc[pn] = { status: "failed", error: e.message, at: Date.now() };
       if ($("rdcTile")) $("rdcTile").innerHTML = rdcTile(pn);
+    });
+  }
+
+  // RR DMS 부품창고 재고 (RR 데몬이 조회, RDC 조회 없음)
+  function requestRr(pn, onDone) {
+    var cur = state.rr[pn];
+    if (cur && cur.status === "pending") return;
+    state.rr[pn] = { status: "pending", at: Date.now() };
+    var done = function () {
+      if ($("rrTile") && $("rrTile").getAttribute("data-pn") === pn) $("rrTile").innerHTML = rrTile(pn);
+      if (onDone) onDone(state.rr[pn]);
+    };
+    sendRequest("rr", pn).then(function (id) {
+      waitRequest(id, function (res) {
+        state.rr[pn] = { status: res.status, result: res.result, error: res.error, at: Date.now() };
+        done();
+      });
+    }).catch(function (e) {
+      state.rr[pn] = { status: "failed", error: e.message, at: Date.now() };
+      done();
     });
   }
 
@@ -761,6 +785,21 @@
     return '<div class="tile-label">RDC 재고</div><div class="tile-num' + (q ? "" : " zero") + '">' + q.toLocaleString() + '<small>EA</small></div><div class="tile-foot">' + hhmm(r.at) + ' 조회 · <button class="btn-inline" data-rdc-retry="' + esc(pn) + '">다시</button></div>';
   }
 
+  function rrTile(pn) {
+    var r = state.rr[pn], label = '<div class="tile-label">RR 재고</div>';
+    if (!r) {
+      return label + '<button class="btn-secondary rdc-btn" data-rr="' + esc(pn) + '">RR 조회</button><div class="tile-foot">' + (daemonStale("rr") ? "RR 연결 PC 응답 없음" : "눌러서 RR DMS에서 조회") + '</div>';
+    }
+    if (r.status === "pending") return label + '<div class="shimmer"></div><div class="tile-foot">RR DMS에서 조회 중</div>';
+    if (r.status === "failed") {
+      return label + '<div class="rdc-err">' + esc(r.error || "조회 실패") + '</div><div class="tile-foot"><button class="btn-inline" data-rr="' + esc(pn) + '">다시 조회</button></div>';
+    }
+    var res = r.result || {}, q = qtyNum(res.crt_qty || 0);
+    return label + '<div class="tile-num' + (q ? "" : " zero") + '">' + q.toLocaleString() + '<small>EA</small></div>' +
+      '<div class="tile-foot">' + (res.found ? (res.lct_cd ? '<span class="mono-loc">' + esc(res.lct_cd) + '</span> · ' : '') : 'RR 부품창고에 없음 · ') +
+      hhmm(r.at) + ' · <button class="btn-inline" data-rr="' + esc(pn) + '">다시</button></div>';
+  }
+
   function moveBanner(pn) {
     var m = state.moves[pn];
     if (!m) return "";
@@ -810,6 +849,7 @@
         '<div class="tile"><div class="tile-label">지점 현재고</div><div class="tile-num' + (Number(p.crt_qty) ? "" : " zero") + '">' + qtyNum(p.crt_qty) + '<small>EA</small></div>' +
           (p.lct_cd ? '<button class="loc-btn" data-go="' + esc(p.lct_cd) + '"><span>위치</span><b class="mono-loc">' + esc(p.lct_cd) + '</b> ›</button>' : '<span class="tag warn" style="margin-top:10px">위치 없음</span>') +
         '</div>' +
+        '<div class="tile rdc" id="rrTile" data-pn="' + esc(pn) + '">' + rrTile(pn) + '</div>' +
         '<div class="tile rdc" id="rdcTile" data-pn="' + esc(pn) + '">' + rdcTile(pn) + '</div>' +
       '</div>' +
       moveBanner(pn) +
@@ -846,7 +886,9 @@
       '<div class="sheet-loc mono-loc">' + esc(pn) + '</div>' +
       '<p class="sheet-sub">' + basis() + ' 기준 부품창고 현재고 목록에 없습니다.<br>재고가 0이거나 다른 창고에 있을 수 있습니다.</p>' +
       '<button class="btn-primary" id="unknownLookup" data-pn="' + esc(pn) + '">DMS에서 조회</button>' +
-      '<div id="unknownResult"></div>'
+      '<div id="unknownResult"></div>' +
+      '<button class="btn-ghost" id="unknownRr" data-pn="' + esc(pn) + '">RR DMS에서 조회</button>' +
+      '<div id="unknownRrResult"></div>'
     );
   }
 
@@ -1218,7 +1260,8 @@
       '<div class="group">' +
         '<div class="row"><div class="row-main">현재고 기준 시각</div><span class="row-value">' + basis() + '</span></div>' +
         '<div class="row"><div class="row-main">부품창고 품목</div><span class="row-value">' + Object.keys(state.parts).length.toLocaleString() + '건</span></div>' +
-        '<div class="row"><div class="row-main">DMS 연결 PC</div><span class="row-value">' + (daemonStale() ? '<span style="color:var(--danger)">응답 없음</span>' : '<span class="dot" style="display:inline-block;margin-right:6px"></span>연결됨 · ' + hhmm(s.daemon_seen_at)) + '</span></div>' +
+        '<div class="row"><div class="row-main">BMW DMS 연결 PC</div><span class="row-value">' + (daemonStale() ? '<span style="color:var(--danger)">응답 없음</span>' : '<span class="dot" style="display:inline-block;margin-right:6px"></span>연결됨 · ' + hhmm(s.daemon_seen_at)) + '</span></div>' +
+        '<div class="row"><div class="row-main">RR DMS 연결 PC</div><span class="row-value">' + (daemonStale("rr") ? '<span style="color:var(--danger)">응답 없음</span>' : '<span class="dot" style="display:inline-block;margin-right:6px"></span>연결됨 · ' + hhmm(s.rr_seen_at)) + '</span></div>' +
         '<div class="row"><div class="row-main">제외</div><span class="row-value">Z 서비스 코드</span></div>' +
       '</div>' +
       '<div class="section-label">기록</div>' +
@@ -1406,6 +1449,8 @@
     }
     if (el.hasAttribute("data-check")) { openCheck(el.getAttribute("data-check")); return; }
     if (el.hasAttribute("data-move")) { openMove(el.getAttribute("data-move")); return; }
+    if (el.hasAttribute("data-rr")) { var rrp = el.getAttribute("data-rr"); delete state.rr[rrp]; requestRr(rrp); if ($("rrTile")) $("rrTile").innerHTML = rrTile(rrp); return; }
+    if (el.id === "unknownRr") { lookupUnknownRr(el.getAttribute("data-pn"), el); return; }
     if (el.hasAttribute("data-rdc-retry")) { var rp = el.getAttribute("data-rdc-retry"); delete state.rdc[rp]; requestRdc(rp); $("rdcTile").innerHTML = rdcTile(rp); return; }
     if (el.hasAttribute("data-refresh")) { refreshPart(el.getAttribute("data-refresh")); return; }
     if (el.hasAttribute("data-step")) {
@@ -1553,6 +1598,20 @@
     } catch (e) { btn.disabled = false; btn.textContent = "DMS에서 조회"; toast("요청하지 못했습니다: " + e.message); }
   }
 
+  function lookupUnknownRr(pn, btn) {
+    btn.disabled = true; btn.textContent = "RR DMS에서 조회 중…";
+    delete state.rr[pn];
+    requestRr(pn, function (r) {
+      if (!$("unknownRrResult")) return;
+      if (r.status !== "done") { btn.disabled = false; btn.textContent = "RR DMS에서 조회"; $("unknownRrResult").innerHTML = '<p class="sheet-sub" style="color:var(--danger)">' + esc(r.error || "조회 실패") + '</p>'; return; }
+      btn.hidden = true;
+      var x = r.result || {};
+      $("unknownRrResult").innerHTML = !x.found ? '<p class="sheet-sub">RR 부품창고에도 없는 품번입니다.</p>'
+        : '<p class="sheet-sub">' + esc(x.item_nm || "") + '</p><div class="bigqty"><span>RR 재고</span><b>' + qtyNum(x.crt_qty) + '</b><small>EA</small></div>' +
+          '<p class="sheet-sub">RR 위치 ' + esc(x.lct_cd || "없음") + '</p>';
+    });
+  }
+
   async function startAudit(btn) {
     btn.disabled = true;
     var r = await sb.rpc("inv_start_audit", { p_kind: state.auditOpen });
@@ -1614,7 +1673,7 @@
   async function logout() {
     stopCamera();
     await sb.auth.signOut();
-    state.user = null; state.result = []; state.tab = "scan"; state.parts = {}; state.locs = {}; state.checks = []; state.moveLog = null;
+    state.user = null; state.result = []; state.tab = "scan"; state.parts = {}; state.locs = {}; state.checks = []; state.moveLog = null; state.rr = {}; state.rdc = {};
     render(true);
   }
 
