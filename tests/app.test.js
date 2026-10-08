@@ -404,8 +404,9 @@ function check(name, ok, extra) { results.push((ok ? 'PASS ' : 'FAIL ') + name +
   check('재고조사 목록에 BMW + RR 와 합계', arow.includes('BMW 1 + RR 4') && arow.includes('5EA'), arow);
   await page.click('[data-aitem="PN10000"]');
   const ash = await page.textContent('#sheet');
-  const qs = await page.$eval('#sheet .qsplit', e => e.textContent);
-  check('확인 창에 합계와 BMW·RR 따로', ash.includes('BMW + RR 합계') && qs === 'BMW1RR4', qs);
+  const qs = await page.$eval('#sheet .ai-split', e => e.textContent);
+  const qv = await page.$eval('#sheet .ai-card .ai-v', e => e.textContent);
+  check('확인 창에 합계와 BMW·RR 따로', ash.includes('조사 수량') && qs === 'BMW 1 · RR 4' && qv === '5EA', qs + ' / ' + qv);
   await page.waitForFunction(() => { const e = document.querySelector('#sheet .lastaudit-line'); return e && !e.textContent.includes('확인 중'); });
   const lal = await page.textContent('#sheet .lastaudit-line');
   check('재고 확인 창: 지금 조사는 빼고 지난 재고조사 (작게)', lal === '지난 재고조사 10/5 일일 · 수량 다름 실사 4 / DMS 5 · 김확인', lal);
@@ -422,12 +423,14 @@ function check(name, ok, extra) { results.push((ok ? 'PASS ' : 'FAIL ') + name +
   const ck = checks.find(c => c.item_cd === 'PN10000' && !c.cleared_at);
   check('수량 다름 체크에 RR 수량도 저장', ck && ck.dms_qty === 1 && ck.rr_qty === 4 && ck.counted_qty === 3, JSON.stringify(ck));
   await page.click('[data-aitem="PN10002"]');
-  const qs0 = await page.$eval('#sheet .qsplit', e => e.textContent);
+  const qs0 = await page.$eval('#sheet .ai-split', e => e.textContent);
   await page.waitForFunction(() => { const e = document.querySelector('#sheet .lastaudit-line'); return e && !e.textContent.includes('확인 중'); });
   check('이력 없으면 "이전 재고조사 이력 없음"', (await page.textContent('#sheet .lastaudit-line')) === '이전 재고조사 이력 없음');
-  check('확인 창에 품번 크게', (await page.$eval('#sheet .sheet-pn', e => e.textContent + ' ' + getComputedStyle(e).fontSize)) === 'PN10002 24px');
+  check('확인 창에 품번 크게 (창에서 가장 큰 글자)', (await page.$eval('#sheet .ai-pn', e => e.textContent + ' ' + getComputedStyle(e).fontSize)) === 'PN10002 28px' &&
+    (await page.$$eval('#sheet *', els => els.filter(e => e.offsetParent && !e.closest('.ai-pn') && e.childNodes.length && [...e.childNodes].some(n => n.nodeType === 3 && n.textContent.trim())).every(e => parseFloat(getComputedStyle(e).fontSize) < 28))));
   // 다른 위치 부품: 잠김 → 예외(사유 필수) → 닫으면 다시 잠김 → 창을 연 채 위치 스캔하면 열림
   check('다른 위치(B000001) 부품은 잠김', await page.isVisible('#aLock'));
+  if (process.env.SHOTS) await (await page.$('#sheet')).screenshot({ path: path.join(process.env.SHOTS, 'audit_lock.png') });
   await page.click('#aExemptToggle');
   await page.click('#aExemptGo');
   check('사유 없이 예외 안 됨', await page.isVisible('#aLock') && (await page.textContent('#toastText')).includes('사유'));
@@ -441,15 +444,16 @@ function check(name, ok, extra) { results.push((ok ? 'PASS ' : 'FAIL ') + name +
   check('다른 위치를 찍으면 그대로 잠김', await page.isVisible('#aLock') && (await page.textContent('#toastText')).includes('이 부품의 위치가 아닙니다'));
   await scan('B000001');
   check('창을 연 채 위치 스캔하면 바로 열림', await page.isHidden('#aLock') && await page.isVisible('#aOk'));
+  if (process.env.SHOTS) await page.screenshot({ path: path.join(process.env.SHOTS, 'audit_open.png') });
   if (process.env.SHOTS) await page.screenshot({ path: path.join(process.env.SHOTS, 'audit_sheet.png') });
   // ===== 재고 확인 창: 지금 DMS 재고 조회 (조사 시작 뒤 출고) =====
   const syncTxt = await page.textContent('#aNow');
-  check('창을 열자마자 최근 DMS 값으로 비교 (기다림 없음)', syncTxt.includes('최근 DMS3') && syncTxt.includes('바뀌지 않았습니다'), syncTxt);
+  check('창을 열자마자 최근 DMS 값으로 비교 (기다림 없음)', /최근 DMS.*기준BMW 3 · RR 0.*3EA/.test(syncTxt) && syncTxt.includes('바뀌지 않았습니다'), syncTxt);
   await page.unroute(SB + '/rest/v1/inv_status*');   // 데몬 응답 중으로
   await page.click('#aNowBtn');
   await page.waitForSelector('#aUseNow', { timeout: 5000 });
   const nowTxt = await page.textContent('#aNow');
-  check('지금 DMS 재고 조회 → 시작 뒤 줄어든 수량', nowTxt.includes('지금 DMS1') && nowTxt.includes('2개 줄었습니다'), nowTxt);
+  check('지금 DMS 재고 조회 → 시작 뒤 줄어든 수량', /지금 DMS.*조회BMW 1 · RR 0.*1EA/.test(nowTxt) && nowTxt.includes('2개 줄었습니다'), nowTxt);
   check('조회는 stock 요청', reqPosts.some(r => r.kind === 'stock' && r.item_cd === 'PN10002'));
   await page.click('#aUseNow');
   check('지금 수량으로 실사 입력 + 메모', (await page.inputValue('#aCountIn')) === '1' && (await page.inputValue('#aMemoIn')).includes('출고 2개'), await page.inputValue('#aMemoIn'));
@@ -457,7 +461,7 @@ function check(name, ok, extra) { results.push((ok ? 'PASS ' : 'FAIL ') + name +
   const mvList = await page.$eval('[data-aitem="PN10002"]', e => e.textContent);
   check('목록에 조사 시작 뒤 변동 표시', mvList.includes('조사 시작 뒤 −2 (지금 1)'), mvList);
   check('현재고 조회는 RDC 없이 (빠르게)', !reqPosts.some(r => r.kind === 'stock' && r.item_cd === 'PN10002' && r.params && r.params.rdc));
-  check('RR 이 없는 부품도 확인 창에 RR 0 표시', qs0 === 'BMW3RR0' && !(await page.textContent('#sheet')).includes('아직 올라오지 않아'), qs0);
+  check('RR 이 없는 부품도 확인 창에 RR 0 표시', qs0 === 'BMW 3 · RR 0' && !(await page.textContent('#sheet')).includes('아직 올라오지 않아'), qs0);
   await page.click('[data-close]');
   await page.click('[data-tab="log"]');
   const lg = await page.textContent('#view');
