@@ -298,6 +298,9 @@
     }
     if (/^Z/.test(code)) { toast("Z로 시작하는 서비스 코드는 조회하지 않습니다"); return; }
 
+    var via = fromCamera ? "camera" : fromScanner ? "scanner" : null;   // 손으로 친 것(null)은 현장 확인으로 안 침
+    // 재고 확인 창이 잠겨 있으면: 그 위치·부품을 찍으면 열림
+    if (via && !$("sheet").hidden && $("aLock")) { beep(); auditSheetScan(code, via); return; }
     // 위치 변경 창이 열려 있으면 스캔한 위치를 새 위치 칸에 넣음
     if (!$("sheet").hidden) {
       if ($("newLoc") && looksLoc(code)) { $("newLoc").value = code; $("newLoc").dispatchEvent(new Event("input", { bubbles: true })); beep(); }
@@ -307,7 +310,7 @@
     if ($("manualInput")) $("manualInput").value = "";
 
     if ($("reportView")) return;   // 보고서 미리보기 중
-    if (state.tab === "audit" && state.auditOpen && currentAudit()) { auditScan(code); return; }
+    if (state.tab === "audit" && state.auditOpen && currentAudit()) { auditScan(code, via); return; }
 
     var type = isLoc(code) ? "loc" : state.parts[code] ? "part" : null;
     if (!type) {
@@ -503,7 +506,7 @@
             if (votes.code === b.code && now - votes.at < 1200) votes.n++; else votes = { code: b.code, n: 1, at: now };
             votes.at = now;
             var need = knownCode(b.code) ? 2 : 3;
-            var blocked = !$("sheet").hidden && !$("newLoc");
+            var blocked = !$("sheet").hidden && !$("newLoc") && !$("aLock");
             if (votes.n >= need && !blocked) {
               votes = { code: "", n: 0, at: 0 };
               fired = { code: b.code, at: now, seen: now };
@@ -1121,7 +1124,7 @@
           '<button class="btn-ghost" id="auditReopen" style="margin:0 0 12px">다시 시작 (이어서 확인)</button>'
         : st.left === 0 ? '<div class="banner ok">모두 확인했습니다 · 수량 다름 ' + st.diff + '건은 체크 기록에 있습니다</div>' +
           '<button class="btn-primary" id="auditFinish" style="margin:0 0 12px">조사 종료 · 보고서 만들기</button>' : '') +
-      (state.auditLoc ? '<div class="locchip"><span>위치 <b class="mono-loc">' + esc(state.auditLoc) + '</b>만 보는 중</span><button id="auditLocClear" aria-label="위치 필터 해제">' + CLOSE + '</button></div>' : '') +
+      (state.auditLoc ? '<div class="locchip"><span>위치 <b class="mono-loc">' + esc(state.auditLoc) + '</b>만 보는 중' + (locScanned(state.auditLoc) ? ' · 스캔함' : ' · <b>스캔해야 확인 가능</b>') + '</span><button id="auditLocClear" aria-label="위치 필터 해제">' + CLOSE + '</button></div>' : '') +
       '<div class="seg" role="tablist">' +
         '<button data-afilter="left" class="' + (state.auditFilter === "left" ? "on" : "") + '">남은 것 ' + st.left + '</button>' +
         '<button data-afilter="diff" class="' + (state.auditFilter === "diff" ? "on" : "") + '">수량 다름 ' + st.diff + '</button>' +
@@ -1139,12 +1142,13 @@
 
   function findAuditItem(pn) { for (var i = 0; i < state.auditItems.length; i++) if (state.auditItems[i].item_cd === pn) return state.auditItems[i]; return null; }
 
-  function auditScan(code) {
+  function auditScan(code, via) {
     if (currentAudit().finished_at) { toast("종료된 조사입니다"); return; }
     var it = findAuditItem(code);
-    if (it) { pushRecent(code); openAuditItem(code); return; }
+    if (it) { pushRecent(code); if (via) markScanned("#" + code, "part"); openAuditItem(code); return; }
     var n = state.auditItems.filter(function (x) { return x.lct_cd === code; }).length;
     if (n) {
+      if (via) markScanned(code, via);
       state.auditLoc = code; state.auditFilter = "left";
       render(false); scrollToResult();
       return;
@@ -1154,8 +1158,52 @@
     toast("이 조사 목록에 없는 바코드입니다: " + code);
   }
 
+  // ---------- 현장 확인 (위치 스캔해야 일치·수량 다름) ----------
+  // 조사마다 스캐너·카메라로 찍은 위치(그리고 부품 바코드 "#품번")와 시각을 이 휴대폰에 둠 — 그 조사가 끝날 때까지 유효
+  var scanned = store.get("auditScans", {});
+  var sheetExempt = {};   // 이 창에서 사유를 적고 연 부품 (창을 닫으면 사라짐)
+  function markScanned(key, via) {
+    var a = currentAudit();
+    if (!a) return;
+    var keep = {}; keep[a.id] = scanned[a.id] || {};   // 지난 조사 기록은 버림
+    keep[a.id][key] = { via: via, at: new Date().toISOString() };
+    scanned = keep; store.set("auditScans", scanned);
+  }
+  // 이 부품을 확인할 수 있는 근거: 위치 스캔 / 부품 바코드 스캔 / 예외(사유). 없으면 null
+  function proofOf(it) {
+    var a = currentAudit(), m = (a && scanned[a.id]) || {};
+    var loc = it.lct_cd && m[it.lct_cd], part = m["#" + it.item_cd];
+    if (loc && (!part || loc.at >= part.at)) return { via: loc.via, at: loc.at };
+    if (part) return { via: "part", at: part.at };
+    if (sheetExempt[it.item_cd]) return { via: "exempt", at: null, reason: sheetExempt[it.item_cd] };
+    return null;
+  }
+  function auditSheetScan(code, via) {
+    var pn = $("aLock").getAttribute("data-pn"), it = findAuditItem(pn);
+    if (code === pn) { markScanned("#" + pn, "part"); openAuditItem(pn); return; }
+    if (it.lct_cd && code === it.lct_cd) { markScanned(code, via); openAuditItem(pn); return; }
+    if (state.auditItems.some(function (x) { return x.lct_cd === code; })) markScanned(code, via);   // 다른 위치도 찍은 걸로 둠
+    toast("이 부품의 위치가 아닙니다: " + code + (it.lct_cd ? " (이 부품은 " + it.lct_cd + ")" : ""));
+  }
+  function locScanned(loc) { var a = currentAudit(); return !!(a && scanned[a.id] && scanned[a.id][loc]); }
+  function proofLabel(p) {
+    var t = p.at ? ' · ' + hhmm(p.at) : '';
+    return p.via === "exempt" ? '예외로 확인 · ' + esc(p.reason)
+      : (p.via === "part" ? '부품 바코드 스캔함' : '위치 스캔함 (' + (p.via === "camera" ? '카메라' : '스캐너') + ')') + t;
+  }
+  function lockHtml(it) {
+    return '<div class="lockbox" id="aLock" data-pn="' + esc(it.item_cd) + '">' +
+      '<div class="lock-t">🔒 ' + (it.lct_cd ? '위치 <b class="mono-loc">' + esc(it.lct_cd) + '</b> 를 스캔하면 확인할 수 있습니다' : '위치 없는 부품 — 부품 바코드를 스캔하세요') + '</div>' +
+      '<div class="lock-s">위치 라벨이나 부품 바코드를 스캐너·카메라로 찍으세요 (직접 입력은 안 됨)</div>' +
+      '<button class="btn-inline" id="aExemptToggle">스캔할 수 없나요? (사유 적고 확인)</button>' +
+      '<div id="aExemptBox" hidden><div class="group" style="margin-top:6px"><div class="row"><textarea class="field" id="aExemptIn" rows="2" placeholder="사유 (예: 위치 라벨 없음, 바코드 훼손)" aria-label="스캔 못 한 사유"></textarea></div></div>' +
+        '<button class="btn-ghost" id="aExemptGo" data-pn="' + esc(it.item_cd) + '">사유 적고 확인하기</button>' +
+        '<div class="lock-s">예외로 확인한 건은 보고서에 따로 표시됩니다</div></div>' +
+    '</div>';
+  }
+
   function openAuditItem(pn) {
-    var it = findAuditItem(pn), curA = currentAudit();
+    var it = findAuditItem(pn), curA = currentAudit(), proof = proofOf(it), locked = !proof;
     var prev = it.status === "ok" ? '<p class="sheet-sub">' + hhmm(it.checked_at) + ' ' + esc(it.checked_by_name || "") + ' · 일치로 확인함</p>'
       : it.status === "diff" ? '<p class="sheet-sub warn-text">' + hhmm(it.checked_at) + ' ' + esc(it.checked_by_name || "") + ' · 실사 ' + qtyNum(it.counted) + '개로 기록함</p>' : '';
     openSheet(
@@ -1170,8 +1218,9 @@
       '<div class="nowbox" id="aNow" data-pn="' + esc(pn) + '">' + (syncNow(it)
         ? auditNowHtml(it, syncNow(it).bmw, syncNow(it).lct, '최근 DMS', basis() + ' 기준')
         : '<button class="btn-secondary" id="aNowBtn">현재 DMS 재고 조회</button><div class="nowbox-hint">' + sinceLabel() + ' 출고·입고로 바뀌었는지 확인</div>') + '</div>' + prev +
-      '<button class="btn-primary" id="aOk" data-pn="' + esc(pn) + '">일치</button>' +
-      '<button class="btn-ghost" id="aDiffToggle">수량 다름</button>' +
+      (locked ? lockHtml(it) : '<div class="proof-line">' + proofLabel(proof) + '</div>') +
+      '<button class="btn-primary" id="aOk" data-pn="' + esc(pn) + '"' + (locked ? ' hidden' : '') + '>일치</button>' +
+      '<button class="btn-ghost" id="aDiffToggle"' + (locked ? ' hidden' : '') + '>수량 다름</button>' +
       '<div id="aDiffBox" hidden>' +
         '<div class="group" style="margin-top:12px"><div class="row stepper"><div class="row-main">실사 수량</div><div class="stepper-ctl"><button type="button" data-astep="-1" aria-label="하나 빼기">−</button><input id="aCountIn" type="text" inputmode="numeric" autocomplete="off" class="qty-in" value="' + qtyNum(it.status === "diff" ? it.counted : itemTotal(it)) + '" aria-label="실사 수량"><button type="button" data-astep="1" aria-label="하나 더하기">+</button></div></div>' +
         '<div class="row"><textarea class="field" id="aMemoIn" rows="2" placeholder="메모 (선택)" aria-label="메모"></textarea></div></div>' +
@@ -1216,7 +1265,11 @@
   async function markAudit(pn, status, counted, memo) {
     delete lastAudits[pn];   // 부품 화면의 '마지막 재고조사'를 새로 받게
     var a = currentAudit(), it = findAuditItem(pn);
-    var job = { userId: state.user.id, auditId: a.id, kind: a.kind, pn: pn, status: status, counted: counted, memo: memo || null, tries: 0 };
+    var pf = proofOf(it);
+    if (!pf) { toast("위치를 먼저 스캔하세요"); openAuditItem(pn); return; }
+    var job = { userId: state.user.id, auditId: a.id, kind: a.kind, pn: pn, status: status, counted: counted, memo: memo || null, tries: 0,
+      proof: { loc_via: pf.via, loc_scanned_at: pf.at, marked_at: new Date().toISOString(), exempt_reason: pf.reason || null } };
+    delete sheetExempt[pn];
     var res = await sendAuditMark(job);
     if (res === "net") {
       queueAuditMark(job);
@@ -1236,7 +1289,7 @@
   function isNetErr(r) { return !navigator.onLine || !r.status; }
   // 결과: "ok" | "check"(항목은 저장, 체크 기록 실패) | "net"(연결 문제) | 오류 문구
   async function sendAuditMark(job) {
-    var r = await sb.from("inv_audit_items").update({ status: job.status, counted: job.counted, memo: job.memo })
+    var r = await sb.from("inv_audit_items").update(Object.assign({ status: job.status, counted: job.counted, memo: job.memo }, job.proof || {}))
       .eq("audit_id", job.auditId).eq("item_cd", job.pn).select().single();
     if (r.error) return isNetErr(r) ? "net" : "저장하지 못했습니다: " + r.error.message;
     var it = state.auditItems.length && currentAudit() && currentAudit().id === job.auditId ? findAuditItem(job.pn) : null;
@@ -1253,7 +1306,7 @@
     outbox.forEach(function (j) {
       if (j.auditId !== auditId) return;
       var it = findAuditItem(j.pn);
-      if (it) Object.assign(it, { status: j.status, counted: j.counted, memo: j.memo, pending: true, checked_by_name: state.user.name, checked_at: new Date().toISOString() });
+      if (it) Object.assign(it, j.proof || {}, { status: j.status, counted: j.counted, memo: j.memo, pending: true, checked_by_name: state.user.name, checked_at: new Date().toISOString() });
     });
   }
   async function flushOutbox() {
@@ -1366,6 +1419,41 @@
     toast("조사를 다시 열었습니다. 남은 것부터 이어서 확인하세요");
   }
 
+  // 현장 확인 점검: 예외 / 스캔하고 오래 지나 확인 / 같은 사람이 너무 빠르게 연달아 확인 / 기록 없음
+  var PROOF_GAP_MIN = 30, PROOF_QUICK_SEC = 3;
+  var VIA_LABEL = { scanner: "위치 스캔", camera: "위치 스캔(카메라)", part: "부품 스캔", exempt: "예외" };
+  function proofReport(items) {
+    var done = items.filter(function (it) { return it.status; });
+    var used = done.some(function (it) { return it.loc_via; });   // 이 기능 전에 확인한 조사는 점검 안 함
+    var sum = { scanner: 0, camera: 0, part: 0, exempt: 0, none: 0 };
+    var flags = {};
+    var add = function (it, msg) { (flags[it.item_cd] = flags[it.item_cd] || { it: it, notes: [] }).notes.push(msg); };
+    done.forEach(function (it) {
+      sum[it.loc_via || "none"]++;
+      if (it.loc_via === "exempt") add(it, "예외: " + (it.exempt_reason || ""));
+      else if (!it.loc_via) { if (used) add(it, "스캔 기록 없음"); }
+      else if (it.loc_scanned_at && it.marked_at) {
+        var gap = (new Date(it.marked_at) - new Date(it.loc_scanned_at)) / 60000;
+        if (gap > PROOF_GAP_MIN) add(it, "스캔 " + (gap >= 120 ? Math.round(gap / 60) + "시간" : Math.round(gap) + "분") + " 뒤 확인");
+      }
+    });
+    // 사람별로 누른 순서대로: 앞 확인과 몇 초 차이인지
+    var byWho = {};
+    done.forEach(function (it) { if (it.marked_at) (byWho[it.checked_by_name || ""] = byWho[it.checked_by_name || ""] || []).push(it); });
+    Object.keys(byWho).forEach(function (w) {
+      var l = byWho[w].sort(function (x, y) { return x.marked_at.localeCompare(y.marked_at); });
+      for (var i = 1; i < l.length; i++) {
+        var sec = (new Date(l[i].marked_at) - new Date(l[i - 1].marked_at)) / 1000;
+        if (sec < PROOF_QUICK_SEC) add(l[i], "앞 확인 " + Math.max(0, Math.round(sec * 10) / 10) + "초 뒤 (빠른 확인)");
+      }
+    });
+    return {
+      summary: used ? sum : null,
+      items: Object.keys(flags).map(function (k) { var f = flags[k], it = f.it; return { lct_cd: it.lct_cd, item_cd: it.item_cd, item_nm: it.item_nm, result: it.status === "ok" ? "일치" : "수량 다름", by: it.checked_by_name, note: f.notes.join(" · ") }; })
+        .sort(function (x, y) { return (x.lct_cd || "~").localeCompare(y.lct_cd || "~") || x.item_cd.localeCompare(y.item_cd); })
+    };
+  }
+
   var REPORT_TITLE = { daily: "일일 재고조사 보고서", aging: "일일장기 재고조사 보고서", weekly: "주간 재고조사 보고서" };
   function reportData(a, items) {
     var diff = items.filter(function (it) { return it.status === "diff"; }), left = items.filter(function (it) { return !it.status; });
@@ -1375,7 +1463,8 @@
       total: items.length, ok: items.length - diff.length - left.length, diff: diff.length, left: left.length,
       diffItems: diff.map(function (it) { return { lct_cd: it.lct_cd, item_cd: it.item_cd, item_nm: it.item_nm + (it.carry_from ? " (" + carryLabel(it) + ")" : ""), qty: it.qty, rr: itemRr(it), counted: it.counted, by: it.checked_by_name, memo: it.memo }; }),
       leftItems: left.map(function (it) { return { lct_cd: it.lct_cd, item_cd: it.item_cd, item_nm: it.item_nm + (it.carry_from ? " (" + carryLabel(it) + ")" : ""), qty: it.qty, rr: itemRr(it) }; }),
-      removedItems: (a.qty_removed || []).map(function (x) { return { lct_cd: x.lct_cd, item_cd: x.item_cd, item_nm: x.item_nm, qty: x.qty, rr: x.rr_qty, at: x.removed_at, by: x.removed_by }; })
+      removedItems: (a.qty_removed || []).map(function (x) { return { lct_cd: x.lct_cd, item_cd: x.item_cd, item_nm: x.item_nm, qty: x.qty, rr: x.rr_qty, at: x.removed_at, by: x.removed_by }; }),
+      proof: proofReport(items)
     };
   }
   // 파일 이름: "261007 일일 재고조사 보고서", "260928-1003 주간 재고조사 보고서"
@@ -1704,6 +1793,7 @@
     var a = document.activeElement;
     if (a && $("sheet").contains(a)) a.blur();
     $("sheet").hidden = true; $("backdrop").hidden = true;
+    sheetExempt = {};
     if (exitOpen) { exitOpen = false; fillBack(); }
   }
   $("backdrop").addEventListener("click", closeSheet);
@@ -1896,9 +1986,18 @@
     if (el.hasAttribute("data-afilter")) { state.auditFilter = el.getAttribute("data-afilter"); render(false); return; }
     if (el.id === "auditLocClear") { state.auditLoc = null; render(false); return; }
     if (el.hasAttribute("data-aitem")) { openAuditItem(el.getAttribute("data-aitem")); return; }
+    if (el.id === "aExemptToggle") { $("aExemptBox").hidden = false; el.hidden = true; $("aExemptIn").focus(); return; }
+    if (el.id === "aExemptGo") {
+      var why = $("aExemptIn").value.trim();
+      if (why.length < 2) { toast("스캔하지 못한 사유를 적어 주세요"); $("aExemptIn").focus(); return; }
+      sheetExempt[el.getAttribute("data-pn")] = why;
+      openAuditItem(el.getAttribute("data-pn"));
+      return;
+    }
     if (el.id === "aOk") { el.disabled = true; markAudit(el.getAttribute("data-pn"), "ok", null); return; }
     if (el.id === "aNowBtn") { auditNow(el); return; }
     if (el.id === "aUseNow") {
+      if ($("aLock")) { toast("위치를 먼저 스캔하세요"); return; }
       var dn = Number(el.getAttribute("data-d"));
       $("aDiffBox").hidden = false; $("aDiffToggle").hidden = true; $("aOk").hidden = true;
       $("aCountIn").value = el.getAttribute("data-qty");

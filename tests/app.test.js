@@ -171,6 +171,25 @@ function check(name, ok, extra) { results.push((ok ? 'PASS ' : 'FAIL ') + name +
   await page.click('[data-tab="audit"]');
   await page.click('[data-audit="weekly"]');
   await page.waitForSelector('[data-aitem="PN10000"]');
+  // ===== 현장 확인: 위치를 스캔해야 일치·수량 다름 =====
+  const scan = async (code) => { await page.evaluate(() => document.activeElement && document.activeElement.blur()); await page.keyboard.type(code); await page.keyboard.press('Enter'); await page.waitForTimeout(200); };
+  await page.click('[data-aitem="PN10000"]');
+  check('스캔 전엔 잠김 (일치·수량 다름 숨김)', await page.isVisible('#aLock') && await page.isHidden('#aOk') && await page.isHidden('#aDiffToggle'));
+  await page.click('[data-close]');
+  await page.fill('#manualInput', 'A140112');
+  await page.press('#manualInput', 'Enter');
+  await page.click('[data-aitem="PN10000"]');
+  check('위치를 손으로 쳐서 열면 그대로 잠김', await page.isVisible('#aLock'));
+  await page.click('[data-close]');
+  check('위치 칩에 "스캔해야 확인 가능"', (await page.textContent('.locchip')).includes('스캔해야 확인 가능'));
+  await scan('A140112');
+  check('위치 칩에 "스캔함"', (await page.textContent('.locchip')).includes('스캔함'), (await page.textContent('.locchip')) + ' / ' + await page.evaluate(() => localStorage.getItem('inv.auditScans') + ' / ' + (document.activeElement && document.activeElement.id)) + ' / ' + await page.textContent('#toastText'));
+  await page.click('[data-aitem="PN10000"]');
+  check('위치 스캔하면 일치·수량 다름 열림', await page.isHidden('#aLock') && await page.isVisible('#aOk') && (await page.textContent('.proof-line')).includes('위치 스캔함 (스캐너)'), await page.textContent('#sheet'));
+  await page.click('[data-close]');
+  await page.click('#auditLocClear');
+  check('위치 필터를 풀어도 스캔한 위치는 계속 열림', await (async () => { await page.click('[data-aitem="PN10001"]'); const v = await page.isVisible('#aOk'); await page.click('[data-close]'); return v; })());
+
   failAuditPatch = true;
   await page.evaluate(() => Object.defineProperty(navigator, 'onLine', { configurable: true, get: () => false }));
   await page.click('[data-aitem="PN10000"]');
@@ -191,6 +210,8 @@ function check(name, ok, extra) { results.push((ok ? 'PASS ' : 'FAIL ') + name +
   check('연결되면 보내고 비움', ob2 === 0 && auditItems[0].status === 'ok', 'outbox=' + ob2 + ' server=' + auditItems[0].status);
   const pend2 = await page.$eval('[data-aitem="PN10000"]', e => e.textContent);
   check('"전송 대기" 사라짐', !pend2.includes('전송 대기'), pend2);
+  const pv = auditItems[0];
+  check('확인 방식·스캔 시각·누른 시각 저장', pv.loc_via === 'scanner' && !!pv.loc_scanned_at && !!pv.marked_at && !pv.exempt_reason, JSON.stringify({ v: pv.loc_via, s: pv.loc_scanned_at, m: pv.marked_at }));
 
   // ===== 2. 수량 다름 → 다시 수량 다름 → 일치 =====
   async function mark(pn, diff, n) {
@@ -224,6 +245,7 @@ function check(name, ok, extra) { results.push((ok ? 'PASS ' : 'FAIL ') + name +
   await page.waitForSelector('#reportView');
   check('종료하면 서버에 종료 기록', !!audit.finished_at);
   const rv = await page.textContent('#rvPages');
+  check('보고서에 현장 확인 점검', rv.includes('현장 확인 점검') && rv.includes('위치 스캔'), rv.slice(rv.indexOf('현장 확인'), rv.indexOf('현장 확인') + 200));
   check('보고서에 요약·수량 다름·미확인', rv.includes('주간 재고조사 보고서') && rv.includes('PN10001') && rv.includes('+3') && rv.includes('PN10002') && rv.includes('미확인 1건'), '');
   const nm = await page.inputValue('#rvName');
   check('파일 이름', nm === '260928-1003 주간 재고조사 보고서', nm);
@@ -404,6 +426,21 @@ function check(name, ok, extra) { results.push((ok ? 'PASS ' : 'FAIL ') + name +
   await page.waitForFunction(() => { const e = document.querySelector('#sheet .lastaudit-line'); return e && !e.textContent.includes('확인 중'); });
   check('이력 없으면 "이전 재고조사 이력 없음"', (await page.textContent('#sheet .lastaudit-line')) === '이전 재고조사 이력 없음');
   check('확인 창에 품번 크게', (await page.$eval('#sheet .sheet-pn', e => e.textContent + ' ' + getComputedStyle(e).fontSize)) === 'PN10002 24px');
+  // 다른 위치 부품: 잠김 → 예외(사유 필수) → 닫으면 다시 잠김 → 창을 연 채 위치 스캔하면 열림
+  check('다른 위치(B000001) 부품은 잠김', await page.isVisible('#aLock'));
+  await page.click('#aExemptToggle');
+  await page.click('#aExemptGo');
+  check('사유 없이 예외 안 됨', await page.isVisible('#aLock') && (await page.textContent('#toastText')).includes('사유'));
+  await page.fill('#aExemptIn', '위치 라벨 없음');
+  await page.click('#aExemptGo');
+  check('사유 적으면 예외로 확인 가능', await page.isVisible('#aOk') && (await page.textContent('.proof-line')).includes('예외로 확인 · 위치 라벨 없음'));
+  await page.click('[data-close]');
+  await page.click('[data-aitem="PN10002"]');
+  check('창을 닫으면 예외 풀림', await page.isVisible('#aLock'));
+  await scan('A140112');
+  check('다른 위치를 찍으면 그대로 잠김', await page.isVisible('#aLock') && (await page.textContent('#toastText')).includes('이 부품의 위치가 아닙니다'));
+  await scan('B000001');
+  check('창을 연 채 위치 스캔하면 바로 열림', await page.isHidden('#aLock') && await page.isVisible('#aOk'));
   if (process.env.SHOTS) await page.screenshot({ path: path.join(process.env.SHOTS, 'audit_sheet.png') });
   // ===== 재고 확인 창: 지금 DMS 재고 조회 (조사 시작 뒤 출고) =====
   const syncTxt = await page.textContent('#aNow');

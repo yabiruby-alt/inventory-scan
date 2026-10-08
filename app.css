@@ -400,3 +400,11 @@ button.row:active, .row-btn:active { background: var(--fill); }
 .la-ok { color: var(--ok); font-weight: 600; }
 .la-diff { color: var(--warn); font-weight: 600; }
 .la-dim { color: var(--label3); }
+
+/* 재고 확인 창: 위치 스캔해야 확인 (현장 확인) */
+.lockbox { margin: 8px 0 0; padding: 14px; border-radius: var(--r); background: var(--accent-soft); text-align: center; }
+.lock-t { font-size: var(--fs-md); font-weight: 600; color: var(--label); }
+.lock-s { margin-top: 4px; font-size: var(--fs-sm); color: var(--label2); }
+.lockbox .btn-inline { margin-top: 6px; font-size: var(--fs-sm); }
+.lockbox .group { text-align: left; }
+.proof-line { margin: 6px 0 -8px; text-align: center; font-size: var(--fs-xs); color: var(--ok); }
