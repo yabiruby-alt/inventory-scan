@@ -433,4 +433,28 @@ button.row:active, .row-btn:active { background: var(--fill); }
 .ai-lock .btn-ghost { margin-top: 10px; }
 
 /* 알림 속 되돌리기 */
-.toast-undo { margin-left: 12px; padding: 2px 0; color: #64D2FF; font-weight: 600; font-size: inherit; }
+.toast-undo { white-space: nowrap; margin-left: 12px; padding: 2px 0; color: #64D2FF; font-weight: 600; font-size: inherit; }
+
+/* 재고 확인 창 버튼: 창 맨 아래 고정 (엄지로 바로) */
+.ai-dock { position: sticky; bottom: calc(-20px - env(safe-area-inset-bottom, 0px)); z-index: 2; margin: 16px -16px calc(-20px - env(safe-area-inset-bottom, 0px)); padding: 10px 16px calc(12px + env(safe-area-inset-bottom, 0px)); background: var(--bar); backdrop-filter: saturate(180%) blur(20px); -webkit-backdrop-filter: saturate(180%) blur(20px); border-top: 0.5px solid var(--sep); }
+.ai-dock .ai-actions { margin-top: 0; }
+.ai-dock #aDiffSave { margin-top: 0; }
+#aDiffBox .ai-diff { margin-top: 16px; }
+
+/* 위치 완료 */
+.done-wrap { display: flex; flex-direction: column; align-items: center; text-align: center; padding: 18px 0 20px; }
+.done-ic { width: 56px; height: 56px; color: var(--ok-dot); }
+@media (prefers-reduced-motion: no-preference) { .done-ic { animation: pop .35s cubic-bezier(.2,1.4,.4,1); } }
+@keyframes pop { from { transform: scale(.4); opacity: 0; } }
+.done-t { margin: 14px 0 0; font-size: 22px; font-weight: 700; letter-spacing: -0.01em; }
+.done-s { margin: 4px 0 0; font-size: var(--fs-md); color: var(--label2); }
+.ai-v.mono-loc { font-family: var(--mono); font-size: var(--fs-lg); font-weight: 600; }
+
+/* 연결 상태 (상단 왼쪽) */
+.netpill { justify-self: start; display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 10px 0 8px; margin-left: 2px; border-radius: 14px; font-size: var(--fs-xs); font-weight: 600; font-variant-numeric: tabular-nums; }
+.netpill i { width: 8px; height: 8px; border-radius: 50%; background: var(--ok-dot); flex: none; }
+.netpill.ok { padding-right: 8px; }
+.netpill.wait, .netpill.dms { background: var(--warn-soft); color: var(--warn); }
+.netpill.wait i, .netpill.dms i { background: #FF9500; }
+.netpill.off { background: rgba(255,59,48,.12); color: var(--danger); }
+.netpill.off i { background: #FF3B30; }
