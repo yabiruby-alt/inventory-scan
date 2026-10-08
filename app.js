@@ -897,6 +897,41 @@
     else renderMoveBar();
   });
 
+  // ---------- 부품별 마지막 재고조사 (참고용) ----------
+  // 일일·일일장기·주간 재고조사에서 일치/수량 다름으로 확인한 기록 중 가장 최근 것 (부품마다 한 번 받아 둠)
+  var lastAudits = {};   // pn → { rows: [...], at } | { loading: true }
+  var KIND_SHORT = { daily: "일일", aging: "일일장기", weekly: "주간" };
+  function loadLastAudit(pn) {
+    var cur = lastAudits[pn];
+    if (cur && (cur.loading || Date.now() - cur.at < 60000)) return;
+    lastAudits[pn] = { loading: true, rows: cur && cur.rows };
+    sb.from("inv_audit_items").select("audit_id,status,counted,qty,rr_qty,checked_at,checked_by_name,memo,inv_audits(kind)")
+      .eq("item_cd", pn).not("status", "is", null).order("checked_at", { ascending: false }).limit(3)
+      .then(function (r) {
+        lastAudits[pn] = { rows: r.error ? (cur && cur.rows) || null : r.data || [], at: r.error ? 0 : Date.now() };
+        document.querySelectorAll('[data-last="' + pn + '"]').forEach(function (el) {
+          el.innerHTML = lastAuditHtml(pn, el.getAttribute("data-skip") || null, el.classList.contains("lastaudit"), true);
+        });
+      });
+  }
+  // skipAudit: 지금 하고 있는 조사는 빼고 그 전 것 (재고 확인 창)
+  function lastAuditHtml(pn, skipAudit, tile, loaded) {
+    if (!loaded) loadLastAudit(pn);
+    var c = lastAudits[pn];
+    if (!c || !c.rows) return c && !c.loading && !c.rows ? '' : '<span class="la-dim">재고조사 이력 확인 중…</span>';
+    var x = c.rows.filter(function (r) { return r.audit_id !== skipAudit; })[0];
+    if (!x) return '<span class="la-dim">' + (tile ? '재고조사 이력 없음' : '이전 재고조사 이력 없음') + '</span>';
+    var d = new Date(x.checked_at), when = (d.getMonth() + 1) + "/" + d.getDate();
+    var kind = KIND_SHORT[x.inv_audits && x.inv_audits.kind] || "";
+    var base = Number(x.qty) + (Number(x.rr_qty) || 0);
+    var res = x.status === "ok" ? '<b class="la-ok">일치</b>'
+      : '<b class="la-diff">수량 다름</b> 실사 ' + qtyNum(x.counted) + ' / DMS ' + qtyNum(base);
+    var who = x.checked_by_name ? ' · ' + esc(x.checked_by_name) : '';
+    return tile
+      ? '<div class="la-head">마지막 재고조사</div><div>' + when + ' ' + kind + who + '</div><div>' + res + '</div>' + (x.memo ? '<div class="la-memo">' + esc(x.memo) + '</div>' : '')
+      : (skipAudit ? '지난 재고조사 ' : '마지막 재고조사 ') + when + ' ' + kind + ' · ' + res + who;
+  }
+
   function viewPart(pn) {
     var p = state.parts[pn];
     var c = openChecksByItem()[pn];
@@ -906,6 +941,7 @@
       '<div class="stock">' +
         '<div class="tile"><div class="tile-label">지점 현재고</div><div class="tile-num' + (Number(p.crt_qty) ? "" : " zero") + '">' + qtyNum(p.crt_qty) + '<small>EA</small></div>' +
           (p.lct_cd ? '<button class="loc-btn" data-go="' + esc(p.lct_cd) + '"><span>위치</span><b class="mono-loc">' + esc(p.lct_cd) + '</b> ›</button>' : '<span class="tag warn" style="margin-top:10px">위치 없음</span>') +
+          '<div class="lastaudit" data-last="' + esc(pn) + '">' + lastAuditHtml(pn, null, true) + '</div>' +
         '</div>' +
         '<div class="tile rdc" id="rrTile" data-pn="' + esc(pn) + '">' + rrTile(pn) + '</div>' +
         '<div class="tile rdc" id="rdcTile" data-pn="' + esc(pn) + '">' + rdcTile(pn) + '</div>' +
@@ -1119,14 +1155,15 @@
   }
 
   function openAuditItem(pn) {
-    var it = findAuditItem(pn);
+    var it = findAuditItem(pn), curA = currentAudit();
     var prev = it.status === "ok" ? '<p class="sheet-sub">' + hhmm(it.checked_at) + ' ' + esc(it.checked_by_name || "") + ' · 일치로 확인함</p>'
       : it.status === "diff" ? '<p class="sheet-sub warn-text">' + hhmm(it.checked_at) + ' ' + esc(it.checked_by_name || "") + ' · 실사 ' + qtyNum(it.counted) + '개로 기록함</p>' : '';
     openSheet(
       '<div class="sheet-head"><button class="cancel" data-close>닫기</button><h2>재고 확인</h2><span></span></div>' +
       '<div class="sheet-loc mono-loc">' + esc(it.lct_cd || "위치 없음") + '</div>' +
       '<div class="sheet-pn">' + esc(pn) + carryTag(it) + '</div>' +
-      '<p class="sheet-sub">' + esc(it.item_nm) + '</p>' +
+      '<p class="sheet-sub" style="margin-bottom:4px">' + esc(it.item_nm) + '</p>' +
+      '<p class="lastaudit-line" data-last="' + esc(pn) + '" data-skip="' + esc(curA ? curA.id : "") + '">' + lastAuditHtml(pn, curA ? curA.id : null, false) + '</p>' +
       '<div class="bigqty"><span>BMW + RR 합계</span><b>' + qtyNum(itemTotal(it)) + '</b><small>EA</small></div>' +
       '<div class="qsplit"><div><span>BMW</span><b>' + qtyNum(it.qty) + '</b></div><div><span>RR</span><b>' + (itemRrKnown(it) ? qtyNum(itemRr(it)) : "-") + '</b></div></div>' +
       (itemRrKnown(it) ? '' : '<div class="notice">RR 재고가 아직 올라오지 않아 BMW 수량만 합계에 들어 있습니다. DMS 연결 PC(데몬)를 확인하세요.</div>') +
@@ -1177,6 +1214,7 @@
   }
 
   async function markAudit(pn, status, counted, memo) {
+    delete lastAudits[pn];   // 부품 화면의 '마지막 재고조사'를 새로 받게
     var a = currentAudit(), it = findAuditItem(pn);
     var job = { userId: state.user.id, auditId: a.id, kind: a.kind, pn: pn, status: status, counted: counted, memo: memo || null, tries: 0 };
     var res = await sendAuditMark(job);
