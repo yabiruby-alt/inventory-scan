@@ -351,23 +351,7 @@ button.row:active, .row-btn:active { background: var(--fill); }
 .rv-state.err { color: var(--danger); }
 .rv-chrome { display: flex; align-items: center; justify-content: center; margin-top: 8px; text-decoration: none; }
 .rr-split { color: var(--accent); font-variant-numeric: tabular-nums; }
-.qsplit { display: flex; justify-content: center; gap: 28px; margin: 2px 0 12px; font-variant-numeric: tabular-nums; }
-.qsplit div { display: flex; align-items: baseline; gap: 6px; }
-.qsplit span { font-size: var(--fs-md); color: var(--label2); }
-.qsplit b { font-size: var(--fs-xl); font-weight: 600; }
 
-/* 재고 확인 창: 지금 DMS 재고 (조사 시작 때와 비교) */
-.nowbox { display: flex; flex-direction: column; align-items: center; gap: 4px; margin: 0 0 12px; padding: 12px 14px; border-radius: var(--r); background: var(--surface); text-align: center; }
-.nowbox .btn-secondary { justify-content: center; }
-.nowbox-hint, .nowbox-sub { font-size: var(--fs-sm); color: var(--label2); font-variant-numeric: tabular-nums; }
-.nowbox-row { display: flex; align-items: baseline; gap: 6px; font-variant-numeric: tabular-nums; }
-.nowbox-row span { font-size: var(--fs-md); color: var(--label2); }
-.nowbox-row b { font-size: var(--fs-3xl); font-weight: 700; }
-.nowbox-row small { font-size: var(--fs-md); color: var(--label2); }
-.nowbox-msg { font-size: var(--fs-md); margin-top: 4px; }
-.nowbox-msg.ok { color: var(--ok); }
-.nowbox-msg.warn { color: var(--warn); }
-.nowbox .rdc-err { margin: 0 0 6px; }
 /* 재고조사 제목 옆 작은 버튼 (DMS 갱신) — 제목 줄 높이 안에서 */
 .rtitle-row { display: flex; align-items: center; gap: 8px; flex-wrap: nowrap; }
 .rtitle-row .rtitle { min-width: 0; }
@@ -401,10 +385,49 @@ button.row:active, .row-btn:active { background: var(--fill); }
 .la-diff { color: var(--warn); font-weight: 600; }
 .la-dim { color: var(--label3); }
 
-/* 재고 확인 창: 위치 스캔해야 확인 (현장 확인) */
-.lockbox { margin: 8px 0 0; padding: 14px; border-radius: var(--r); background: var(--accent-soft); text-align: center; }
-.lock-t { font-size: var(--fs-md); font-weight: 600; color: var(--label); }
-.lock-s { margin-top: 4px; font-size: var(--fs-sm); color: var(--label2); }
-.lockbox .btn-inline { margin-top: 6px; font-size: var(--fs-sm); }
-.lockbox .group { text-align: left; }
-.proof-line { margin: 6px 0 -8px; text-align: center; font-size: var(--fs-xs); color: var(--ok); }
+
+/* ---------- 재고 확인 창 (애플 시트 형태) ----------
+   크기 단계: 품번 28 / 수량 22 / 버튼 17 / 본문 15 / 보조 13 */
+.ai-hero { padding: 6px 4px 16px; }
+.ai-loc { display: flex; align-items: center; gap: 4px; font-size: var(--fs-md); font-weight: 600; color: var(--accent); }
+.ai-loc svg { width: 14px; height: 14px; flex: none; }
+.ai-loc .tag.carry { margin-left: 6px; }
+.ai-pn { margin-top: 4px; font-family: var(--mono); font-size: var(--fs-3xl); line-height: 1.15; font-weight: 700; letter-spacing: 0.01em; color: var(--label); word-break: break-all; }
+.ai-nm { margin-top: 4px; font-size: var(--fs-md); color: var(--label2); }
+.ai-last { text-align: left; margin: 6px 0 0; font-size: var(--fs-sm); color: var(--label3); font-variant-numeric: tabular-nums; }
+.ai-last .la-ok, .ai-last .la-diff { font-weight: 500; }
+.ai-card { overflow: hidden; }
+.ai-row { position: relative; display: flex; align-items: center; gap: 12px; min-height: 56px; padding: 10px 16px; }
+.ai-card .ai-row + .ai-row, .ai-card > .ai-row + #aNow > .ai-row:first-child { border-top: 0.5px solid var(--sep); }
+.ai-l .ai-when { margin-left: 6px; font-size: var(--fs-sm); color: var(--label3); font-variant-numeric: tabular-nums; }
+.ai-l { flex: 1; min-width: 0; font-size: var(--fs-md); color: var(--label); }
+.ai-l small { display: block; margin-top: 2px; font-size: var(--fs-sm); color: var(--label2); font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ai-v { flex: none; font-size: 22px; font-weight: 600; font-variant-numeric: tabular-nums; letter-spacing: -0.01em; }
+.ai-v small { margin-left: 3px; font-size: var(--fs-sm); font-weight: 400; color: var(--label2); }
+.ai-v.warn { color: var(--warn); }
+.ai-refresh { flex: none; width: 32px; height: 32px; margin-right: -6px; border-radius: 50%; display: grid; place-items: center; color: var(--accent); }
+.ai-refresh svg { width: 17px; height: 17px; }
+.ai-refresh:active { background: var(--fill); }
+.ai-moved { min-height: 44px; padding-block: 8px; font-size: var(--fs-sm); color: var(--warn); justify-content: space-between; }
+.ai-moved.ok { color: var(--ok); }
+.ai-moved span { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: inline-flex; align-items: center; gap: 4px; }
+.ai-moved svg, .ai-done svg { width: 13px; height: 13px; flex: none; }
+.ai-moved .ai-link { font-size: var(--fs-sm); }
+.ai-link { flex: none; color: var(--accent); font-size: var(--fs-md); font-weight: 600; padding: 4px 0; }
+.ai-row .spin { display: inline-block; vertical-align: -2px; }
+.ai-foot { margin: 8px 16px 0; font-size: var(--fs-sm); }
+.ai-status { display: flex; flex-direction: column; align-items: center; gap: 2px; margin: 14px 0 0; font-size: var(--fs-sm); text-align: center; font-variant-numeric: tabular-nums; }
+.ai-status .proof-line { margin: 0; color: var(--label2); font-size: var(--fs-sm); }
+.ai-done { display: inline-flex; align-items: center; gap: 4px; color: var(--ok); font-weight: 600; }
+.ai-done.warn { color: var(--warn); }
+.ai-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 16px; }
+.ai-actions .btn-primary, .ai-actions .btn-ghost { margin: 0; }
+.ai-diff { margin-top: 16px; }
+#aDiffBox .btn-primary { margin-top: 12px; }
+.ai-lock { margin-top: 16px; padding: 18px 16px 12px; border-radius: var(--r); background: var(--surface); text-align: center; }
+.ai-lock-t { display: inline-flex; align-items: center; gap: 6px; font-size: var(--fs-lg); font-weight: 600; color: var(--label); }
+.ai-lock-t svg { width: 16px; height: 16px; color: var(--label2); }
+.ai-lock-s { margin-top: 4px; font-size: var(--fs-sm); color: var(--label2); }
+.ai-lock .ai-link { margin-top: 8px; font-size: var(--fs-sm); font-weight: 500; }
+.ai-exempt { margin-top: 10px; background: var(--bg); text-align: left; }
+.ai-lock .btn-ghost { margin-top: 10px; }
