@@ -375,3 +375,17 @@ button.row:active, .row-btn:active { background: var(--fill); }
 .title-btn svg { width: 13px; height: 13px; }
 .title-btn:disabled { opacity: .6; }
 @media (prefers-reduced-motion: no-preference) { .title-btn.busy svg { animation: spin .8s linear infinite; } }
+/* 검색칸 부분 일치 목록 (검색칸 바로 아래에 겹쳐 펼침) */
+.suggest { position: absolute; left: 16px; right: 16px; top: calc(100% - 6px); z-index: 20; max-height: min(55vh, 440px); overflow-y: auto; overscroll-behavior: contain; background: var(--surface); border-radius: 12px; box-shadow: var(--shadow); }
+.suggest[hidden] { display: none; }
+.sug-head { padding: 9px 14px 6px; font-size: var(--fs-xs); color: var(--label2); }
+.sug { position: relative; display: flex; align-items: center; gap: 10px; width: 100%; min-height: 52px; padding: 8px 14px; text-align: left; }
+.sug + .sug::before { content: ""; position: absolute; top: 0; left: 14px; right: 0; border-top: 0.5px solid var(--sep); }
+.sug:active { background: var(--fill); }
+.sug.done { opacity: .55; }
+.sug-main { flex: 1; min-width: 0; }
+.sug-code { font-size: var(--fs-body); font-weight: 600; }
+.sug-code mark { background: var(--accent-soft); color: var(--accent); border-radius: 3px; padding: 0 1px; }
+.sug-sub { font-size: var(--fs-sm); color: var(--label2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sug-qty { flex: none; font-size: var(--fs-lg); font-weight: 600; font-variant-numeric: tabular-nums; }
+.sug-qty small { font-size: var(--fs-xs); font-weight: 500; color: var(--label2); margin-left: 2px; }

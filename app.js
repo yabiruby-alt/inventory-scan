@@ -326,6 +326,52 @@
     store.set("recent", state.recent);
   }
 
+  // ---------- 검색칸 부분 일치 ----------
+  // 품번 일부(앞 11718, 뒤 6980 등)나 위치 일부를 치면 맞는 부품·위치를 바로 아래에 보여 줌. 누르면 조회
+  // 재고조사 중에는 그 조사 목록 안에서만 찾음
+  var SUGGEST_MIN = 3, SUGGEST_MAX = 50;
+  function inAudit() { return state.tab === "audit" && state.auditOpen && !!currentAudit(); }
+  function exactCode(c) { return inAudit() ? !!findAuditItem(c) || state.auditItems.some(function (x) { return x.lct_cd === c; }) : isLoc(c) || !!state.parts[c]; }
+  function suggestItems(q) {
+    q = String(q || "").replace(/\s+/g, "");
+    if (q.length < SUGGEST_MIN) return [];
+    var out = [];
+    function add(code, o) { var i = code.replace(/\s+/g, "").indexOf(q); if (i >= 0) { o.code = code; o.at = i; out.push(o); } }
+    if (inAudit()) {
+      state.auditItems.forEach(function (it) { add(it.item_cd, { nm: it.item_nm, loc: it.lct_cd, qty: itemTotal(it), done: !!it.status }); });
+    } else {
+      Object.keys(state.locs).forEach(function (l) { add(l, { isLoc: true, n: state.locs[l].length }); });
+      Object.keys(state.parts).forEach(function (k) { var pp = state.parts[k]; add(k, { nm: pp.item_nm, loc: pp.lct_cd, qty: Number(pp.crt_qty) + rrQty(k) }); });
+    }
+    out.sort(function (a, b) { return (a.at === 0 ? 0 : 1) - (b.at === 0 ? 0 : 1) || (a.isLoc ? 0 : 1) - (b.isLoc ? 0 : 1) || a.code.localeCompare(b.code); });
+    return out;
+  }
+  function markHit(code, q) {
+    var i = code.indexOf(q);
+    return i < 0 ? esc(code) : esc(code.slice(0, i)) + '<mark>' + esc(code.slice(i, i + q.length)) + '</mark>' + esc(code.slice(i + q.length));
+  }
+  function hideSuggest() { var b = $("suggest"); if (b) { b.hidden = true; b.innerHTML = ""; } }
+  function renderSuggest() {
+    var box = $("suggest"), inp = $("manualInput");
+    if (!box || !inp) return;
+    var q = normCode(inp.value).replace(/\s+/g, ""), list = suggestItems(q);
+    if (q.length < SUGGEST_MIN) { hideSuggest(); return; }
+    var rows = list.slice(0, SUGGEST_MAX).map(function (x) {
+      if (x.isLoc) return '<button class="sug" data-sug="' + esc(x.code) + '"><span class="tag loc">위치</span><div class="sug-main"><div class="sug-code mono-loc">' + markHit(x.code, q) + '</div><div class="sug-sub">부품 ' + x.n + '종</div></div></button>';
+      return '<button class="sug' + (x.done ? ' done' : '') + '" data-sug="' + esc(x.code) + '"><div class="sug-main"><div class="sug-code pn">' + markHit(x.code, q) + '</div>' +
+        '<div class="sug-sub">' + esc(x.nm || "") + (x.loc ? ' · ' + esc(x.loc) : '') + (x.done ? ' · 확인함' : '') + '</div></div><span class="sug-qty">' + qtyNum(x.qty) + '<small>EA</small></span></button>';
+    }).join("");
+    box.innerHTML = list.length
+      ? '<div class="sug-head">' + (inAudit() ? '조사 목록에서 ' : '') + list.length + '건' + (list.length > SUGGEST_MAX ? ' · 앞 ' + SUGGEST_MAX + '건만 표시, 더 입력하세요' : '') + '</div>' + rows
+      : '<div class="sug-head">' + (inAudit() ? '조사 목록에 ' : '') + '"' + esc(q) + '"가 들어간 품번·위치가 없습니다</div>';
+    box.hidden = false;
+  }
+  // 목록 밖을 누르면 닫음 (입력한 글자는 그대로)
+  document.addEventListener("click", function (e) {
+    var b = $("suggest");
+    if (b && !b.hidden && !e.target.closest("#suggest") && !e.target.closest("#manual")) hideSuggest();
+  }, true);
+
   // 블루투스 스캐너는 키보드처럼 입력된 뒤 Enter
   var buf = "", bufTimer;
   document.addEventListener("keydown", function (e) {
@@ -699,6 +745,7 @@
     stopCamera();
     host.innerHTML = '<div class="scanner">' + vf +
       '<form class="search" id="manual" autocomplete="off">' + SEARCH + '<input id="manualInput" inputmode="text" autocapitalize="characters" placeholder="품번 또는 위치 직접 입력" aria-label="품번 또는 위치"><button type="submit">조회</button></form>' +
+      '<div class="suggest" id="suggest" hidden></div>' +
       '<div id="daemonNotice">' + daemonNotice() + '</div>' +
       '</div>';
     renderCamTools();
@@ -1741,6 +1788,7 @@
     if (el.hasAttribute("data-photo-pick")) { closeSheet(); resolve(el.getAttribute("data-photo-pick"), true, true); return; }
     if (el.id === "photoDiag") { diagPhoto(); return; }
     if (el.id === "diagBtn") { diagLive(); return; }
+    if (el.hasAttribute("data-sug")) { var sc = el.getAttribute("data-sug"); hideSuggest(); if ($("manualInput")) $("manualInput").blur(); resolve(sc); return; }
     if (el.hasAttribute("data-go")) {
       var code = el.getAttribute("data-go");
       state.result.push({ type: isLoc(code) ? "loc" : "part", code: code });
@@ -1829,11 +1877,17 @@
   });
 
   document.addEventListener("submit", function (e) {
-    if (e.target.id === "manual") { e.preventDefault(); resolve($("manualInput").value); $("manualInput").blur(); }
+    if (e.target.id === "manual") {
+      e.preventDefault();
+      var mv = $("manualInput").value, mc = normCode(mv), ml = suggestItems(mc);
+      if (!exactCode(mc) && ml.length === 1) mv = ml[0].code;
+      hideSuggest(); resolve(mv); $("manualInput").blur();
+    }
     if (e.target.id === "loginForm") { e.preventDefault(); login(); }
   });
 
   document.addEventListener("input", function (e) {
+    if (e.target.id === "manualInput") renderSuggest();
     if (e.target.id === "locSearch") {
       var sl = state.result[state.result.length - 1].code;
       state.locQ = { loc: sl, q: e.target.value };
