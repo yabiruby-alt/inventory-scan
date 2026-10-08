@@ -53,6 +53,11 @@ if _S is None:
     sys.modules["_stockapp_state"] = _S
 if not hasattr(_S, "rr_sent"):   # 이 항목이 생기기 전부터 떠 있던 데몬
     _S.rr_sent = {}
+if not hasattr(_S, "aging_day"):
+    _S.aging_day = None      # 일일장기 재고조사 목록을 만든 날 (하루 한 번)
+
+AGING_DAYS = 180          # 일일장기: 최종입고·최종출고가 이보다 오래된 부품
+AGING_COUNT = 10          # 하루에 뽑는 개수
 
 
 def _log(msg: str) -> None:
@@ -195,6 +200,26 @@ def _upload_parts(table: str, sent_attr: str, branch: str, pw_rows: list, now: s
     return rows, changed
 
 
+def _aging_candidates(pw_rows: list, today: str) -> list:
+    """부품창고 현재고 중 최종입고일·최종출고일이 모두 AGING_DAYS 일보다 오래된 부품 (출고 이력 없음 포함, Z 제외).
+    최근에 재고조사로 확인한 부품 제외·무작위 뽑기·한 바퀴 돌기는 DB 함수 inv_build_aging 이 함"""
+    from datetime import date, timedelta
+    cutoff = (date.fromisoformat(today) - timedelta(days=AGING_DAYS)).isoformat()
+    out = []
+    for r in pw_rows:
+        cd = r.get("itemCd") or ""
+        if not cd or cd.startswith("Z") or _num(r.get("crtQty")) <= 0:
+            continue
+        purc = (r.get("lastPurcDt") or "")[:10]
+        sale = (r.get("lastSaleDt") or "")[:10]
+        if (purc and purc >= cutoff) or (sale and sale >= cutoff):
+            continue
+        out.append({"item_cd": cd, "item_nm": r.get("itemNm"), "lct_cd": (r.get("lctCd") or "").strip(),
+                    "qty": _num(r.get("crtQty")), "alois_cd": r.get("aloisCd"),
+                    "last_purc_dt": purc or None, "last_sale_dt": sale or None})
+    return out
+
+
 def on_cycle(page, ctx: dict) -> None:
     """ctx: pw_rows(부품창고 현재고 원본), stockcheck, stockcheck_week, today(YYYY-MM-DD)"""
     if not CONFIG.exists():
@@ -221,6 +246,18 @@ def on_cycle(page, ctx: dict) -> None:
             _rest("POST", "inv_audit_source?on_conflict=branch,kind", dict(body, updated_at=now),
                   "resolution=merge-duplicates,return=minimal")
             _S.lists_sent[kind] = body
+
+    # 2-1) 일일장기 재고조사: 그날 처음 한 번만 10개를 뽑아 하루 고정 (실패해도 다른 업로드엔 영향 없음)
+    today = ctx.get("today") or datetime.now().strftime("%Y-%m-%d")
+    if _S.aging_day != today:
+        try:
+            cands = _aging_candidates(ctx["pw_rows"], today)
+            n = _rest("POST", "rpc/inv_build_aging", {"p_day": today, "p_candidates": cands,
+                                                      "p_count": AGING_COUNT, "p_days": AGING_DAYS}, prefer="")
+            _S.aging_day = today
+            _log(f"일일장기 목록: 대상 {len(cands)}건 중 " + ("이미 오늘 목록 있음" if n == -1 else f"{n}건 뽑음"))
+        except Exception as e:
+            _log(f"일일장기 목록 실패 (다음 주기에 재시도): {str(e)[:200]}")
 
     # 3) 상태
     _rest("POST", "inv_status?on_conflict=branch",

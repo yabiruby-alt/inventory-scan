@@ -972,14 +972,16 @@
   function periodLabel(kind, s) {
     if (!s) return "목록 준비 중";
     var md = function (d) { var x = d.split("-"); return Number(x[1]) + "/" + Number(x[2]); };
+    if (kind === "aging") return md(s.period_start) + " 장기재고 무작위 " + (s.items ? s.items.length : s.item_count) + "건";
     return kind === "daily" ? md(s.period_start) + " 입고분" : md(s.period_start) + " ~ " + md(s.period_end) + " 출고분";
   }
-  var AUDIT_TITLE = { daily: "일일 재고조사", weekly: "주간 재고조사" };
-  var AUDIT_RULE = { daily: "오늘 입고된 부품 중 현재고가 있는 부품", weekly: "지난주 월~토 출고된 부품 중 현재고가 있는 부품" };
+  var AUDIT_TITLE = { daily: "일일 재고조사", aging: "일일장기 재고조사", weekly: "주간 재고조사" };
+  var AUDIT_RULE = { daily: "오늘 입고된 부품 중 현재고가 있는 부품", weekly: "지난주 월~토 출고된 부품 중 현재고가 있는 부품",
+    aging: "최종입고·최종출고가 180일 넘은 부품(출고 이력 없음 포함) 중 하루 10개 무작위. 한 바퀴 돌 때까지 겹치지 않고, 최근 180일 안에 재고조사로 확인한 부품은 빠짐" };
   var auditCounts = {};   // audit_id -> {done, diff} (홈 카드용)
 
   function viewAuditHome() {
-    var cards = ["daily", "weekly"].map(function (k) {
+    var cards = ["daily", "aging", "weekly"].map(function (k) {
       var s = state.sources[k], a = state.audits[k];
       var live = a && s && a.period_start === s.period_start && a.period_end === s.period_end ? a : null;
       var st = live && auditCounts[live.id];
@@ -997,7 +999,7 @@
     }).join("");
     return '<h1 class="large">재고조사</h1><p class="meta">해운대 부품창고 · 위치 순서대로 확인</p>' +
       '<div class="acards">' + cards + '</div>' +
-      '<p class="footnote">일일: ' + AUDIT_RULE.daily + '<br>주간: ' + AUDIT_RULE.weekly + '<br>수량은 그 부품의 현재고 전체입니다.</p>';
+      '<p class="footnote">일일: ' + AUDIT_RULE.daily + '<br>일일장기: ' + AUDIT_RULE.aging + '<br>주간: ' + AUDIT_RULE.weekly + '<br>수량은 그 부품의 현재고 전체입니다.</p>';
   }
 
   function auditRows(items, started) {
@@ -1066,7 +1068,7 @@
       return head +
         '<div class="summary"><div><b>' + items.length + '</b><span>조사할 부품</span></div><div><b>' + Object.keys(locN).length + '</b><span>위치</span></div></div>' +
         '<button class="btn-primary" id="auditStart" style="margin-top:0"' + (items.length ? '' : ' disabled') + '>조사 시작</button>' +
-        '<p class="footnote">시작하면 지금 목록(' + items.length + '건)으로 고정됩니다.' + (k === "daily" ? ' 이후 입고되는 부품은 다음 조사에 들어갑니다.' : '') + '</p>' +
+        '<p class="footnote">시작하면 지금 목록(' + items.length + '건)으로 고정됩니다.' + (k === "daily" ? ' 이후 입고되는 부품은 다음 조사에 들어갑니다.' : k === "aging" ? ' 목록은 오늘 하루 동안 같고, 내일은 다른 10개가 뽑힙니다.' : '') + '</p>' +
         '<div class="section-label">조사할 부품 미리보기</div>' + auditRows(items, false);
     }
     var st = auditStatsOf(state.auditItems), done = !!a.finished_at;
@@ -1317,7 +1319,7 @@
     toast("조사를 다시 열었습니다. 남은 것부터 이어서 확인하세요");
   }
 
-  var REPORT_TITLE = { daily: "일일 재고조사 보고서", weekly: "주간 재고조사 보고서" };
+  var REPORT_TITLE = { daily: "일일 재고조사 보고서", aging: "일일장기 재고조사 보고서", weekly: "주간 재고조사 보고서" };
   function reportData(a, items) {
     var diff = items.filter(function (it) { return it.status === "diff"; }), left = items.filter(function (it) { return !it.status; });
     return {
