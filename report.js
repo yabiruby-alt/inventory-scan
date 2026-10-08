@@ -52,6 +52,7 @@
     ".rp-list .m{font-family:'SF Mono',ui-monospace,Menlo,Consolas,'Roboto Mono',monospace}",
     ".rp-list .neg{color:#c0392b;font-weight:700}",
     ".rp-list .pos{color:#1f6fd1;font-weight:700}",
+    ".rp-note{color:#555;margin:0 0 2mm}",
     ".rp-none{color:#666;border:1px dashed #bbb;padding:3mm;text-align:center}",
     ".rp-sign{display:flex;justify-content:flex-end;gap:0;margin-top:8mm}",
     ".rp-sign div{width:26mm;border:1px solid #bbb;text-align:center}",
@@ -64,7 +65,8 @@
    * 보고서 내용을 블록 목록으로 만든다. 블록은 그대로 놓이고, 표({head, rows})는 줄 단위로 쪽을 나눈다.
    * d: {title, branch, period, started_at, started_by, finished_at, finished_by, printed_at,
    *     total, ok, diff, left, diffItems[{lct_cd,item_cd,item_nm,qty,rr,counted,by,memo}], leftItems[{lct_cd,item_cd,item_nm,qty,rr}],
-   *     removedItems[{lct_cd,item_cd,item_nm,qty,rr,at,by}] (DMS 갱신 때 재고 0으로 뺀 부품)}
+   *     removedItems[{lct_cd,item_cd,item_nm,qty,rr,at,by}] (DMS 갱신 때 재고 0으로 뺀 부품),
+   *     proof{summary{scanner,camera,part,exempt,none}|null, items[{lct_cd,item_cd,item_nm,result,by,note}]} (현장 확인 점검)}
    *   qty = BMW(DMS) 수량, rr = RR 수량. 차이 = 실사 - (BMW + RR)
    */
   function blocks(d) {
@@ -112,6 +114,24 @@
           return '<tr><td class="m">' + esc(it.lct_cd || "-") + '</td><td class="m">' + esc(it.item_cd) + '</td><td>' + esc(it.item_nm) + '</td><td class="n">' + num(Number(it.qty) + (Number(it.rr) || 0)) + '</td><td>' + ymdhm(it.at) + ' ' + esc(it.by || "") + '</td></tr>';
         })
       } });
+    }
+
+    // 현장 확인 점검 (위치 스캔해야 확인 — 예외·오래 지나 확인·빠른 연속 확인)
+    var pf = d.proof;
+    if (pf && pf.summary) {
+      var s = pf.summary;
+      out.push({ html: '<h2 class="rp-h">현장 확인 점검 ' + pf.items.length + '건</h2>' +
+        '<p class="rp-note">확인 방식: 위치 스캔 ' + (s.scanner + s.camera) + ' · 부품 스캔 ' + s.part + ' · 예외 ' + s.exempt + (s.none ? ' · 기록 없음 ' + s.none : '') +
+        ' — 예외, 스캔하고 30분 넘게 지나 확인, 앞 확인 3초 안에 다시 확인한 건</p>' });
+      if (pf.items.length) {
+        out.push({ table: {
+          head: '<colgroup><col style="width:18mm"><col style="width:25mm"><col><col style="width:15mm"><col style="width:15mm"><col style="width:46mm"></colgroup>' +
+            '<thead><tr><th>위치</th><th>품번</th><th>품명</th><th>결과</th><th>확인자</th><th>점검 내용</th></tr></thead>',
+          rows: pf.items.map(function (it) {
+            return '<tr><td class="m">' + esc(it.lct_cd || "-") + '</td><td class="m">' + esc(it.item_cd) + '</td><td>' + esc(it.item_nm) + '</td><td>' + esc(it.result) + '</td><td>' + esc(it.by || "") + '</td><td>' + esc(it.note) + '</td></tr>';
+          })
+        } });
+      } else out.push({ html: '<div class="rp-none">점검할 건이 없습니다</div>' });
     }
 
     out.push({ html: '<div class="rp-sign"><div><span>담당</span><i></i></div><div><span>확인</span><i></i></div><div><span>승인</span><i></i></div></div>' });
