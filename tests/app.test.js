@@ -130,6 +130,8 @@ function check(name, ok, extra) { results.push((ok ? 'PASS ' : 'FAIL ') + name +
 
   // 로그인된 세션을 미리 넣어 둠
   await page.addInitScript(([uid, exp]) => {
+    if (localStorage.getItem('inv.autoNext') === null) localStorage.setItem('inv.autoNext', 'false');   // 기본 시험은 한 건씩 (자동 이어가기 시험은 따로)
+    navigator.vibrate = (p) => { (window.__vib = window.__vib || []).push(p); return true; };
     localStorage.setItem('inventory-scan-auth', JSON.stringify({ access_token: 'x', refresh_token: 'y', token_type: 'bearer', expires_in: 3600, expires_at: exp, user: { id: uid, aud: 'authenticated', role: 'authenticated' } }));
   }, [USER.id, Math.floor(now / 1000) + 86400 * 365]);
 
@@ -192,9 +194,17 @@ function check(name, ok, extra) { results.push((ok ? 'PASS ' : 'FAIL ') + name +
 
   failAuditPatch = true;
   await page.evaluate(() => Object.defineProperty(navigator, 'onLine', { configurable: true, get: () => false }));
+  await page.evaluate(() => localStorage.setItem('inv.autoNext', 'true'));
   await page.click('[data-aitem="PN10000"]');
+  check('확인 버튼은 창 맨 아래 고정', (await page.$eval('.ai-dock', e => getComputedStyle(e).position)) === 'sticky');
   await page.click('#aOk');
   await page.waitForTimeout(300);
+  if (process.env.SHOTS) await page.screenshot({ path: path.join(process.env.SHOTS, 'auto_next.png') });
+  check('다음 부품 자동: 같은 위치 다음 부품 창이 바로 열림', await page.isVisible('#aOk') && (await page.textContent('#sheet .ai-pn')) === 'PN10001');
+  await page.click('[data-close]');
+  await page.evaluate(() => localStorage.setItem('inv.autoNext', 'false'));
+  const pillOff = await page.$eval('#netPill', e => e.className + ' ' + e.textContent);
+  check('연결 상태: 끊기면 "오프라인"', pillOff.includes('off') && pillOff.includes('오프라인'), pillOff);
   const ob1 = await page.evaluate(() => JSON.parse(localStorage.getItem('inv.auditOutbox') || '[]').length);
   check('끊겼을 때 휴대폰에 저장', ob1 === 1, 'outbox=' + ob1);
   await page.click('[data-afilter="all"]');
@@ -210,6 +220,8 @@ function check(name, ok, extra) { results.push((ok ? 'PASS ' : 'FAIL ') + name +
   check('연결되면 보내고 비움', ob2 === 0 && auditItems[0].status === 'ok', 'outbox=' + ob2 + ' server=' + auditItems[0].status);
   const pend2 = await page.$eval('[data-aitem="PN10000"]', e => e.textContent);
   check('"전송 대기" 사라짐', !pend2.includes('전송 대기'), pend2);
+  const pillOk = await page.$eval('#netPill', e => e.className + '|' + e.textContent);
+  check('연결 상태: 다시 연결·전송 끝나면 초록 점만', pillOk === 'netpill ok|', pillOk);
   const pv = auditItems[0];
   check('확인 방식·스캔 시각·누른 시각 저장', pv.loc_via === 'scanner' && !!pv.loc_scanned_at && !!pv.marked_at && !pv.exempt_reason, JSON.stringify({ v: pv.loc_via, s: pv.loc_scanned_at, m: pv.marked_at }));
 
@@ -228,6 +240,27 @@ function check(name, ok, extra) { results.push((ok ? 'PASS ' : 'FAIL ') + name +
   const open2 = checks.filter(c => c.item_cd === 'PN10001' && !c.cleared_at);
   check('일치로 바꾸면 체크 기록 지움', open2.length === 0, 'open=' + open2.length);
   check('지울 때 이름은 보내지 않음 (서버가 채움)', checks.every(c => !('cleared_by_name' in c)));
+  // 되돌리기: 방금 누른 '일치'를 되돌리면 전 상태(수량 다름 6)로, 창이 다시 열림
+  const ut = await page.textContent('#toastText');
+  check('저장 알림에 되돌리기', ut.includes('PN10001 · 일치로 저장했습니다') && !!(await page.$('.toast-undo')), ut);
+  await page.click('.toast-undo');
+  await page.waitForTimeout(400);
+  const u1 = auditItems.find(x => x.item_cd === 'PN10001');
+  const uc = checks.filter(c => c.item_cd === 'PN10001' && !c.cleared_at);
+  check('되돌리면 전 상태로 (수량 다름 6, 체크 기록 다시)', u1.status === 'diff' && Number(u1.counted) === 6 && uc.length === 1 && uc[0].counted_qty === 6, JSON.stringify({ s: u1.status, c: u1.counted, open: uc.length }));
+  check('되돌리면 그 부품 창이 다시 열림', await page.isVisible('#aOk') && (await page.textContent('#sheet .ai-pn')) === 'PN10001');
+  await page.evaluate(() => { localStorage.setItem('inv.autoNext', 'true'); window.__vib = []; });
+  await page.click('#aOk');
+  await page.waitForTimeout(300);
+  const dn = await page.textContent('#sheet');
+  check('위치를 다 끝내면 "위치 완료" + 다음 위치 안내', dn.includes('A140112 완료') && dn.includes('다음 위치') && dn.includes('B000001') && !!(await page.$('#goNextLoc')), dn);
+  if (process.env.SHOTS) await page.screenshot({ path: path.join(process.env.SHOTS, 'loc_done.png') });
+  check('위치 완료는 다른 소리·진동', JSON.stringify(await page.evaluate(() => window.__vib)).includes('[20,40,20]'), JSON.stringify(await page.evaluate(() => window.__vib)));
+  await page.click('#goNextLoc');
+  check('"다음 위치로" → 그 위치만 보이고 스캔 안내', (await page.textContent('.locchip')).includes('B000001') && (await page.textContent('#toastText')).includes('B000001 라벨을 스캔하세요'));
+  await page.click('#auditLocClear');
+  await page.click('[data-afilter="all"]');
+  await page.evaluate(() => localStorage.setItem('inv.autoNext', 'false'));
 
   // ===== 재고조사 종료 → 보고서 → PDF =====
   await mark('PN10001', true, 5);   // 수량 다름 1, 미확인 1 (PN10002), 일치 1
@@ -440,9 +473,13 @@ function check(name, ok, extra) { results.push((ok ? 'PASS ' : 'FAIL ') + name +
   await page.click('[data-close]');
   await page.click('[data-aitem="PN10002"]');
   check('창을 닫으면 예외 풀림', await page.isVisible('#aLock'));
+  await page.evaluate(() => { window.__vib = []; });
   await scan('A140112');
+  check('틀린 위치: 진동 두 번', JSON.stringify(await page.evaluate(() => window.__vib)) === '[[70,60,70]]', JSON.stringify(await page.evaluate(() => window.__vib)));
   check('다른 위치를 찍으면 그대로 잠김', await page.isVisible('#aLock') && (await page.textContent('#toastText')).includes('이 부품의 위치가 아닙니다'));
+  await page.evaluate(() => { window.__vib = []; });
   await scan('B000001');
+  check('맞는 위치: 진동 한 번', JSON.stringify(await page.evaluate(() => window.__vib)) === '[35]', JSON.stringify(await page.evaluate(() => window.__vib)));
   check('창을 연 채 위치 스캔하면 바로 열림', await page.isHidden('#aLock') && await page.isVisible('#aOk'));
   if (process.env.SHOTS) await page.screenshot({ path: path.join(process.env.SHOTS, 'audit_open.png') });
   if (process.env.SHOTS) await page.screenshot({ path: path.join(process.env.SHOTS, 'audit_sheet.png') });

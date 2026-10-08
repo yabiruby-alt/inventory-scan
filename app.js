@@ -95,29 +95,52 @@
   var toastTimer;
   // 화면 위쪽 작은 알림. 결과가 화면에 바로 보이는 동작에는 띄우지 않고, 오류·안 보이는 결과만. 누르면 닫힘
   var TOAST_ERR = /실패|못했|없는|아닙니다|입력하세요|필요합니다|않습니다|눌러 주세요/;
+  var undoFn = null;
   function toast(msg) {
     var err = TOAST_ERR.test(msg);
+    undoFn = null;
     $("toastText").textContent = msg;
     $("toast").classList.toggle("err", err);
     $("toast").hidden = false;
     clearTimeout(toastTimer);
     toastTimer = setTimeout(function () { $("toast").hidden = true; }, err ? 3000 : 1600);
   }
-  $("toast").addEventListener("click", function () { clearTimeout(toastTimer); $("toast").hidden = true; });
+  $("toast").addEventListener("click", function (e) {
+    var fn = e.target.closest(".toast-undo") && undoFn;
+    undoFn = null; clearTimeout(toastTimer); $("toast").hidden = true;
+    if (fn) fn();
+  });
+  // 저장 알림 + 되돌리기 (5초 동안, 잘못 눌렀을 때)
+  function toastUndo(msg, fn) {
+    toast(msg);
+    $("toastText").innerHTML = esc(msg) + '<button class="toast-undo">되돌리기</button>';
+    undoFn = fn;
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(function () { undoFn = null; $("toast").hidden = true; }, 5000);
+  }
 
   // 스캔 성공 소리·진동
   var audioCtx = null;
-  function beep() {
+  // 성공: 높은 음 한 번 + 짧은 진동 / 실패: 낮은 음 두 번 + 진동 두 번 (시끄러운 창고에서 화면 안 봐도 구분)
+  function tone(freq, at, len, vol) {
+    var o = audioCtx.createOscillator(), g = audioCtx.createGain(), t = audioCtx.currentTime + at;
+    o.type = "sine"; o.frequency.value = freq;
+    g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(vol, t + 0.01); g.gain.exponentialRampToValueAtTime(0.0001, t + len);
+    o.connect(g); g.connect(audioCtx.destination);
+    o.start(t); o.stop(t + len + 0.02);
+  }
+  function sound(kind) {
     if (!store.get("sound", true)) return;
     try {
       audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)();
-      var o = audioCtx.createOscillator(), g = audioCtx.createGain();
-      o.frequency.value = 1760; g.gain.value = 0.08;
-      o.connect(g); g.connect(audioCtx.destination);
-      o.start(); o.stop(audioCtx.currentTime + 0.08);
+      if (kind === "err") { tone(330, 0, 0.14, 0.12); tone(262, 0.17, 0.2, 0.12); }
+      else if (kind === "done") { tone(1319, 0, 0.09, 0.07); tone(1760, 0.1, 0.12, 0.07); }
+      else tone(1760, 0, 0.08, 0.08);
     } catch (e) { /* 소리 없이 진행 */ }
-    if (navigator.vibrate) navigator.vibrate(40);
+    if (navigator.vibrate) navigator.vibrate(kind === "err" ? [70, 60, 70] : kind === "done" ? [20, 40, 20] : 35);
   }
+  function beep() { sound("ok"); }
+  function buzz() { sound("err"); }
 
   // ---------- 데이터 ----------
   // 현재고는 처음에 전부 받고, 그 뒤로는 데몬이 바꾼 행만 받음 (휴대폰 데이터 절약). 1시간마다는 전부 다시 받음
@@ -184,6 +207,7 @@
   async function loadStatus() {
     var r = await sb.from("inv_status").select("*").maybeSingle();
     if (!r.error) state.status = r.data;
+    renderNet();
   }
   async function loadChecks() {
     var all = [], from = 0, size = 1000;
@@ -296,21 +320,21 @@
       if (code === lastScan.code && t - lastScan.at < SCAN_COOLDOWN_MS) return;
       lastScan = { code: code, at: t };
     }
-    if (/^Z/.test(code)) { toast("Z로 시작하는 서비스 코드는 조회하지 않습니다"); return; }
+    if (/^Z/.test(code)) { buzz(); toast("Z로 시작하는 서비스 코드는 조회하지 않습니다"); return; }
 
     var via = fromCamera ? "camera" : fromScanner ? "scanner" : null;   // 손으로 친 것(null)은 현장 확인으로 안 침
     // 재고 확인 창이 잠겨 있으면: 그 위치·부품을 찍으면 열림
-    if (via && !$("sheet").hidden && $("aLock")) { beep(); auditSheetScan(code, via); return; }
+    if (via && !$("sheet").hidden && $("aLock")) { auditSheetScan(code, via); return; }
     // 위치 변경 창이 열려 있으면 스캔한 위치를 새 위치 칸에 넣음
     if (!$("sheet").hidden) {
       if ($("newLoc") && looksLoc(code)) { $("newLoc").value = code; $("newLoc").dispatchEvent(new Event("input", { bubbles: true })); beep(); }
       return;
     }
-    if (fromScanner) beep();
     if ($("manualInput")) $("manualInput").value = "";
 
     if ($("reportView")) return;   // 보고서 미리보기 중
     if (state.tab === "audit" && state.auditOpen && currentAudit()) { auditScan(code, via); return; }
+    if (via) sound(isLoc(code) || state.parts[code] || (/^[A-Z0-9]{5,20}$/.test(code) && !looksLoc(code)) ? "ok" : "err");
 
     var type = isLoc(code) ? "loc" : state.parts[code] ? "part" : null;
     if (!type) {
@@ -1071,7 +1095,7 @@
         (it.status === "ok" ? '<span class="pill ok">일치</span>'
         : it.status === "diff" ? '<span class="pill warn">실사 ' + qtyNum(it.counted) + '</span>' : '');
       html += '<button class="row' + (it.status ? " done" : "") + '" data-aitem="' + esc(it.item_cd) + '"' + (started ? '' : ' disabled') + '>' +
-        '<div class="row-main"><div class="pn">' + esc(it.item_cd) + carryTag(it) + '</div><div class="row-sub">' + esc(it.item_nm) + (it.checked_by_name ? ' · ' + esc(it.checked_by_name) : '') + '</div>' + splitNote(it.qty, itemRr(it)) + movedNote(it) + '</div>' +
+        '<div class="row-main"><div class="pn">' + esc(it.item_cd) + carryTag(it) + '</div><div class="row-sub">' + esc(it.item_nm) + (it.status && it.checked_by_name ? ' · ' + esc(it.checked_by_name) : '') + '</div>' + splitNote(it.qty, itemRr(it)) + movedNote(it) + '</div>' +
         '<div class="qty">' + qtyNum(itemTotal(it)) + '<small>EA</small></div>' + mark + '</button>';
     });
     return html + '</div>';
@@ -1143,6 +1167,8 @@
   function findAuditItem(pn) { for (var i = 0; i < state.auditItems.length; i++) if (state.auditItems[i].item_cd === pn) return state.auditItems[i]; return null; }
 
   function auditScan(code, via) {
+    var known = findAuditItem(code) || state.auditItems.some(function (x) { return x.lct_cd === code; });
+    if (via) sound(known && !currentAudit().finished_at ? "ok" : "err");
     if (currentAudit().finished_at) { toast("종료된 조사입니다"); return; }
     var it = findAuditItem(code);
     if (it) { pushRecent(code); if (via) markScanned("#" + code, "part"); openAuditItem(code); return; }
@@ -1180,8 +1206,9 @@
   }
   function auditSheetScan(code, via) {
     var pn = $("aLock").getAttribute("data-pn"), it = findAuditItem(pn);
-    if (code === pn) { markScanned("#" + pn, "part"); openAuditItem(pn); return; }
-    if (it.lct_cd && code === it.lct_cd) { markScanned(code, via); openAuditItem(pn); return; }
+    if (code === pn) { beep(); markScanned("#" + pn, "part"); openAuditItem(pn); return; }
+    if (it.lct_cd && code === it.lct_cd) { beep(); markScanned(code, via); openAuditItem(pn); return; }
+    buzz();
     if (state.auditItems.some(function (x) { return x.lct_cd === code; })) markScanned(code, via);   // 다른 위치도 찍은 걸로 둠
     toast("이 부품의 위치가 아닙니다: " + code + (it.lct_cd ? " (이 부품은 " + it.lct_cd + ")" : ""));
   }
@@ -1227,17 +1254,21 @@
       (itemRrKnown(it) ? '' : '<p class="ai-foot warn-text">RR 재고가 아직 올라오지 않아 BMW 수량만 들어 있습니다</p>') +
       (done || !locked ? '<div class="ai-status">' + done + (locked ? '' : '<span class="proof-line">' + proofLabel(proof) + '</span>') + '</div>' : '') +
       (locked ? lockHtml(it) : '') +
-      '<div class="ai-actions"' + (locked ? ' hidden' : '') + '>' +
-        '<button class="btn-ghost" id="aDiffToggle">수량 다름</button>' +
-        '<button class="btn-primary" id="aOk" data-pn="' + esc(pn) + '">일치</button>' +
-      '</div>' +
       '<div id="aDiffBox" hidden>' +
         '<div class="group ai-diff"><div class="row stepper"><div class="row-main">실사 수량</div><div class="stepper-ctl"><button type="button" data-astep="-1" aria-label="하나 빼기">−</button><input id="aCountIn" type="text" inputmode="numeric" autocomplete="off" class="qty-in" value="' + qtyNum(it.status === "diff" ? it.counted : itemTotal(it)) + '" aria-label="실사 수량"><button type="button" data-astep="1" aria-label="하나 더하기">+</button></div></div>' +
         '<div class="row"><textarea class="field" id="aMemoIn" rows="2" placeholder="메모 (선택)" aria-label="메모"></textarea></div></div>' +
-        '<button class="btn-primary" id="aDiffSave" data-pn="' + esc(pn) + '">수량 다름으로 저장</button>' +
+      '</div>' +
+      // 엄지로 바로 누르게 창 맨 아래에 고정
+      '<div class="ai-dock"' + (locked ? ' hidden' : '') + '>' +
+        '<div class="ai-actions">' +
+          '<button class="btn-ghost" id="aDiffToggle">수량 다름</button>' +
+          '<button class="btn-primary" id="aOk" data-pn="' + esc(pn) + '">일치</button>' +
+        '</div>' +
+        '<button class="btn-primary" id="aDiffSave" data-pn="' + esc(pn) + '" hidden>수량 다름으로 저장</button>' +
       '</div>'
     );
   }
+  function showDiffBox() { $("aDiffBox").hidden = false; document.querySelector(".ai-actions").hidden = true; $("aDiffSave").hidden = false; }
   var CHECK_ICON = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3.5 8.5l3 3 6-7" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>';
 
   // 재고 확인 창: 조사 시작 때 수량(스냅샷)과 지금 DMS 수량 비교 — 시작 뒤 출고·입고된 부품 확인용
@@ -1281,11 +1312,15 @@
     if (!pf) { toast("위치를 먼저 스캔하세요"); openAuditItem(pn); return; }
     var job = { userId: state.user.id, auditId: a.id, kind: a.kind, pn: pn, status: status, counted: counted, memo: memo || null, tries: 0,
       proof: { loc_via: pf.via, loc_scanned_at: pf.at, marked_at: new Date().toISOString(), exempt_reason: pf.reason || null } };
+    // 되돌리기용: 누르기 전 상태
+    var before = { userId: job.userId, auditId: a.id, kind: a.kind, pn: pn, status: it.status || null, counted: it.status === "diff" ? it.counted : null, memo: it.status ? it.memo || null : null, tries: 0,
+      proof: { loc_via: it.loc_via || null, loc_scanned_at: it.loc_scanned_at || null, marked_at: it.marked_at || null, exempt_reason: it.exempt_reason || null } };
     delete sheetExempt[pn];
     var res = await sendAuditMark(job);
+    var saved = status === "ok" ? "일치로 저장했습니다" : "실사 " + qtyNum(counted) + "개로 저장했습니다";
     if (res === "net") {
       queueAuditMark(job);
-      toast("연결이 불안정해 휴대폰에 저장했습니다. 연결되면 자동으로 보냅니다");
+      saved = "휴대폰에 저장했습니다 (연결되면 보냄)";
     } else if (res !== "ok" && res !== "check") {
       await loadAudits();
       if (currentAudit() && currentAudit().finished_at) { closeSheet(); render(false); toast("이미 종료된 조사라 저장하지 못했습니다"); return; }
@@ -1293,7 +1328,50 @@
     }
     auditCounts[a.id] = auditStatsOf(state.auditItems);
     closeSheet(); render(false);
-    if (res === "check") toast("조사 결과는 저장했지만 체크 기록에 반영하지 못했습니다. 다시 저장해 주세요");
+    if (res === "check") { toast("조사 결과는 저장했지만 체크 기록에 반영하지 못했습니다. 다시 저장해 주세요"); return; }
+    toastUndo(pn + " · " + saved, function () { undoAudit(before); });
+    if (store.get("autoNext", true) && a.id === (currentAudit() || {}).id) goNext(it);
+  }
+  // 확인 뒤: 같은 위치의 다음 미확인 부품을 바로 엶. 위치를 다 끝냈으면 '위치 완료' 창 + 다음 위치 안내
+  function goNext(it) {
+    var items = state.auditItems, i = items.indexOf(it), loc = it.lct_cd || "";
+    var left = function (x) { return !x.status && x !== it; };
+    var after = items.slice(i + 1).concat(items.slice(0, Math.max(i, 0)));
+    var same = after.filter(function (x) { return (x.lct_cd || "") === loc && left(x); })[0];
+    if (same) { openAuditItem(same.item_cd); return; }
+    var nx = after.filter(left)[0], rest = items.filter(left).length;
+    var nxLoc = nx ? nx.lct_cd || "" : null;
+    var nxN = nx ? items.filter(function (x) { return (x.lct_cd || "") === nxLoc && left(x); }).length : 0;
+    sound("done");
+    openSheet(
+      '<div class="done-wrap">' + DONE_ICON +
+        '<h2 class="done-t">' + (rest ? '<span class="mono-loc">' + esc(loc || "위치 없음") + '</span> 완료' : '모두 확인했습니다') + '</h2>' +
+        '<p class="done-s">' + (rest ? '이 위치의 부품을 모두 확인했습니다' : '이 조사의 부품을 하나도 빠짐없이 확인했습니다') + '</p>' +
+      '</div>' +
+      (nx ? '<div class="group ai-card"><div class="ai-row"><div class="ai-l">다음 위치<small>이 위치 ' + nxN + '건 · 전체 남은 ' + rest + '건</small></div>' +
+        '<div class="ai-v mono-loc">' + esc(nxLoc || "위치 없음") + '</div></div></div>' : '') +
+      '<div class="ai-dock"><div class="ai-actions">' +
+        '<button class="btn-ghost" data-close>목록 보기</button>' +
+        (nx ? '<button class="btn-primary" id="goNextLoc" data-loc="' + esc(nxLoc) + '">다음 위치로</button>'
+            : '<button class="btn-primary" id="doneFinish">조사 종료</button>') +
+      '</div></div>'
+    );
+  }
+  var DONE_ICON = '<svg class="done-ic" viewBox="0 0 56 56" aria-hidden="true"><circle cx="28" cy="28" r="28" fill="currentColor"/><path d="M17 29l7.5 7.5L39.5 21" fill="none" stroke="#fff" stroke-width="4.5" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+  // 되돌리기: 누르기 전 상태로 되돌리고 그 부품 창을 다시 엶
+  async function undoAudit(job) {
+    var a = currentAudit();
+    if (!a || a.id !== job.auditId || a.finished_at) { toast("되돌릴 수 없습니다 (조사가 바뀌었거나 종료됨)"); return; }
+    var res = await sendAuditMark(job);
+    if (res === "net") queueAuditMark(job);
+    else if (res !== "ok" && res !== "check") { toast("되돌리지 못했습니다: " + res); return; }
+    var it = findAuditItem(job.pn);
+    if (it && !job.status) Object.assign(it, { status: null, counted: null, memo: null });
+    auditCounts[a.id] = auditStatsOf(state.auditItems);
+    delete lastAudits[job.pn];
+    render(false);
+    toast("되돌렸습니다");
+    if (it) openAuditItem(job.pn);
   }
 
   // 전파가 약한 곳: 보내지 못한 재고조사 확인을 이 휴대폰에 두었다가 연결되면 다시 보냄
@@ -1312,6 +1390,7 @@
     outbox = outbox.filter(function (j) { return !(j.auditId === job.auditId && j.pn === job.pn); }).concat([job]);
     store.set("auditOutbox", outbox);
     applyOutbox(job.auditId);
+    renderNet();
   }
   // 아직 보내지 못한 확인을 화면 목록에 덮어 보여줌
   function applyOutbox(auditId) {
@@ -1336,7 +1415,7 @@
         store.set("auditOutbox", outbox);
         if (res === "ok") sent++; else dropped.push(job.pn);
       }
-    } finally { flushing = false; }
+    } finally { flushing = false; renderNet(); }
     if (sent) {
       var a = currentAudit();
       if (a) auditCounts[a.id] = auditStatsOf(state.auditItems);
@@ -1696,7 +1775,8 @@
       '<div class="group">' +
         '<div class="row"><div class="row-main">카메라 스캔</div><label class="switch"><input type="checkbox" id="optCam"' + (store.get("camera", true) ? " checked" : "") + ' aria-label="카메라 스캔"><i></i></label></div>' +
         '<div class="row"><div class="row-main">카메라 인식 방식</div><span class="row-value">' + esc(cam.engine || "준비 전") + '</span></div>' +
-        '<div class="row"><div class="row-main">스캔 성공 시 소리·진동</div><label class="switch"><input type="checkbox" id="optSound"' + (store.get("sound", true) ? " checked" : "") + ' aria-label="스캔 성공 시 소리"><i></i></label></div>' +
+        '<div class="row"><div class="row-main">소리·진동<div class="row-sub">성공은 한 번, 실패는 두 번 울림</div></div><label class="switch"><input type="checkbox" id="optSound"' + (store.get("sound", true) ? " checked" : "") + ' aria-label="소리·진동"><i></i></label></div>' +
+        '<div class="row"><div class="row-main">재고조사 다음 부품 자동<div class="row-sub">확인하면 같은 위치의 다음 부품을 바로 엶</div></div><label class="switch"><input type="checkbox" id="optAutoNext"' + (store.get("autoNext", true) ? " checked" : "") + ' aria-label="재고조사 다음 부품 자동"><i></i></label></div>' +
         '<div class="row"><div class="row-main">인식 진단 모드</div><label class="switch"><input type="checkbox" id="optDiag"' + (store.get("diag", false) ? " checked" : "") + ' aria-label="인식 진단 모드"><i></i></label></div>' +
       '</div>' +
       '<p class="footnote">블루투스 스캐너는 휴대폰에 키보드로 연결하면 바로 쓸 수 있습니다. 진단 모드를 켜면 카메라에 "진단" 버튼이 생기고, 누른 순간의 장면이 인식 개선용으로 저장됩니다.</p>' +
@@ -1735,6 +1815,23 @@
     else if (!on && !host.hidden) { host.hidden = true; host.innerHTML = ""; stopCamera(); }
   }
 
+  // ---------- 연결 상태 (상단 왼쪽 작은 표시) ----------
+  // 정상: 초록 점만 / 전송 대기: 주황 "대기 n" / DMS 연결 PC 응답 없음: 주황 "DMS" / 인터넷 끊김: 빨강 "오프라인"
+  function netState() {
+    if (!navigator.onLine) return { c: "off", t: "오프라인", msg: "인터넷이 끊겼습니다. 재고조사 확인은 휴대폰에 두었다가 연결되면 자동으로 보냅니다" };
+    var n = state.user ? (outbox || []).filter(function (j) { return j.userId === state.user.id; }).length : 0;
+    if (n) return { c: "wait", t: "대기 " + n, msg: "아직 보내지 못한 확인 " + n + "건 — 연결되면 자동으로 보냅니다" };
+    if (state.status && daemonStale()) return { c: "dms", t: "DMS", msg: "DMS 연결 PC가 응답하지 않습니다. 재고는 " + basis() + " 기준이고 RDC 조회·위치 변경은 할 수 없습니다" };
+    return { c: "ok", t: "", msg: "정상 연결 · 재고 " + basis() + " 기준" };
+  }
+  function netPill() {
+    var n = netState();
+    return '<button class="netpill ' + n.c + '" id="netPill" aria-label="연결 상태: ' + (n.t || "정상") + '"><i></i>' + (n.t ? '<span>' + n.t + '</span>' : '') + '</button>';
+  }
+  function renderNet() { var el = $("netPill"); if (el) el.outerHTML = netPill(); }
+  window.addEventListener("offline", renderNet);
+  window.addEventListener("online", renderNet);
+
   function render(resetScroll) {
     try { renderView(resetScroll); } finally { renderMoveBar(); }
   }
@@ -1761,11 +1858,11 @@
     if ($("daemonNotice")) $("daemonNotice").innerHTML = daemonNotice();
 
     if (state.tab === "scan") {
-      nav.innerHTML = '<span></span><span class="nav-title always">스캔</span><span class="nav-meta">' + basis() + ' 기준</span>';
+      nav.innerHTML = netPill() + '<span class="nav-title always">스캔</span><span class="nav-meta">' + basis() + ' 기준</span>';
     } else if (state.tab === "audit" && state.auditOpen) {
-      nav.innerHTML = '<span></span><span class="nav-title always">' + AUDIT_TITLE[state.auditOpen] + '</span><span class="nav-meta">' + basis() + ' 기준</span>';
+      nav.innerHTML = netPill() + '<span class="nav-title always">' + AUDIT_TITLE[state.auditOpen] + '</span><span class="nav-meta">' + basis() + ' 기준</span>';
     } else {
-      nav.innerHTML = '<span></span><span class="nav-title">' + ({ log: "체크 기록", recent: "최근 스캔", settings: "설정", audit: "재고조사", moves: "위치 변경 이력" }[state.tab]) + '</span><span></span>';
+      nav.innerHTML = netPill() + '<span class="nav-title">' + ({ log: "체크 기록", recent: "최근 스캔", settings: "설정", audit: "재고조사", moves: "위치 변경 이력" }[state.tab]) + '</span><span></span>';
     }
 
     var top = content.scrollTop;
@@ -1998,6 +2095,15 @@
     if (el.hasAttribute("data-afilter")) { state.auditFilter = el.getAttribute("data-afilter"); render(false); return; }
     if (el.id === "auditLocClear") { state.auditLoc = null; render(false); return; }
     if (el.hasAttribute("data-aitem")) { openAuditItem(el.getAttribute("data-aitem")); return; }
+    if (el.id === "netPill") { toast(netState().msg); return; }
+    if (el.id === "goNextLoc") {
+      var nl = el.getAttribute("data-loc");
+      state.auditLoc = nl || null; state.auditFilter = "left";
+      closeSheet(); render(false); scrollToResult();
+      if (nl && !locScanned(nl)) toast("위치 " + nl + " 라벨을 스캔하세요");
+      return;
+    }
+    if (el.id === "doneFinish") { closeSheet(); openFinish(); return; }
     if (el.id === "aExemptToggle") { $("aExemptBox").hidden = false; el.hidden = true; $("aExemptIn").focus(); return; }
     if (el.id === "aExemptGo") {
       var why = $("aExemptIn").value.trim();
@@ -2011,13 +2117,13 @@
     if (el.id === "aUseNow") {
       if ($("aLock")) { toast("위치를 먼저 스캔하세요"); return; }
       var dn = Number(el.getAttribute("data-d"));
-      $("aDiffBox").hidden = false; document.querySelector(".ai-actions").hidden = true;
+      showDiffBox();
       $("aCountIn").value = el.getAttribute("data-qty");
       if (!$("aMemoIn").value) $("aMemoIn").value = sinceLabel() + " " + (dn < 0 ? "출고 " : "입고 ") + qtyNum(Math.abs(dn)) + "개 (지금 DMS " + el.getAttribute("data-qty") + "개)";
       $("aDiffSave").scrollIntoView({ block: "nearest" });
       return;
     }
-    if (el.id === "aDiffToggle") { $("aDiffBox").hidden = false; document.querySelector(".ai-actions").hidden = true; $("aCountIn").focus(); return; }
+    if (el.id === "aDiffToggle") { showDiffBox(); $("aCountIn").focus(); return; }
     if (el.hasAttribute("data-astep")) { var ai = $("aCountIn"); ai.value = Math.max(0, (parseFloat(ai.value) || 0) + parseInt(el.getAttribute("data-astep"), 10)); return; }
     if (el.id === "aDiffSave") {
       var apn = el.getAttribute("data-pn"), av = parseFloat($("aCountIn").value), ait = findAuditItem(apn);
@@ -2074,7 +2180,8 @@
   });
   document.addEventListener("change", function (e) {
     if (e.target.id === "optCam") { store.set("camera", e.target.checked); }
-    if (e.target.id === "optSound") { store.set("sound", e.target.checked); }
+    if (e.target.id === "optSound") { store.set("sound", e.target.checked); if (e.target.checked) beep(); }
+    if (e.target.id === "optAutoNext") { store.set("autoNext", e.target.checked); }
     if (e.target.id === "optDiag") { store.set("diag", e.target.checked); }
     if (e.target.id === "photoInput") { var pf = e.target.files && e.target.files[0]; e.target.value = ""; scanPhoto(pf); }
   });
