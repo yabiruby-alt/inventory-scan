@@ -389,3 +389,5 @@ button.row:active, .row-btn:active { background: var(--fill); }
 .sug-sub { font-size: var(--fs-sm); color: var(--label2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .sug-qty { flex: none; font-size: var(--fs-lg); font-weight: 600; font-variant-numeric: tabular-nums; }
 .sug-qty small { font-size: var(--fs-xs); font-weight: 500; color: var(--label2); margin-left: 2px; }
+/* 일일장기 이월 표시 (품번 옆 작은 꼬리표) */
+.tag.carry { height: 18px; padding-inline: 6px; margin-left: 6px; vertical-align: 2px; font-family: var(--font); letter-spacing: 0; }

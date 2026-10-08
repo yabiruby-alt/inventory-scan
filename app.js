@@ -1002,6 +1002,10 @@
       '<p class="footnote">일일: ' + AUDIT_RULE.daily + '<br>일일장기: ' + AUDIT_RULE.aging + '<br>주간: ' + AUDIT_RULE.weekly + '<br>수량은 그 부품의 현재고 전체입니다.</p>';
   }
 
+  // 일일장기: 전에 뽑혔는데 확인 안 돼 넘어온 부품 → "이월 10/8" (처음 뽑힌 날)
+  function carryLabel(it) { if (!it.carry_from) return ""; var x = String(it.carry_from).split("-"); return "이월 " + Number(x[1]) + "/" + Number(x[2]); }
+  function carryTag(it) { return it.carry_from ? ' <span class="tag warn carry">' + carryLabel(it) + '</span>' : ''; }
+
   function auditRows(items, started) {
     var list = items.filter(function (it) {
       if (state.auditLoc && it.lct_cd !== state.auditLoc) return false;
@@ -1028,7 +1032,7 @@
         (it.status === "ok" ? '<span class="pill ok">일치</span>'
         : it.status === "diff" ? '<span class="pill warn">실사 ' + qtyNum(it.counted) + '</span>' : '');
       html += '<button class="row' + (it.status ? " done" : "") + '" data-aitem="' + esc(it.item_cd) + '"' + (started ? '' : ' disabled') + '>' +
-        '<div class="row-main"><div class="pn">' + esc(it.item_cd) + '</div><div class="row-sub">' + esc(it.item_nm) + (it.checked_by_name ? ' · ' + esc(it.checked_by_name) : '') + '</div>' + splitNote(it.qty, itemRr(it)) + movedNote(it) + '</div>' +
+        '<div class="row-main"><div class="pn">' + esc(it.item_cd) + carryTag(it) + '</div><div class="row-sub">' + esc(it.item_nm) + (it.checked_by_name ? ' · ' + esc(it.checked_by_name) : '') + '</div>' + splitNote(it.qty, itemRr(it)) + movedNote(it) + '</div>' +
         '<div class="qty">' + qtyNum(itemTotal(it)) + '<small>EA</small></div>' + mark + '</button>';
     });
     return html + '</div>';
@@ -1063,7 +1067,7 @@
         (a && a.qty_refreshed_at ? ' · 수량·위치 ' + hhmm(a.qty_basis_at || a.qty_refreshed_at) + ' DMS 기준' : '') +
         (a && a.qty_removed && a.qty_removed.length ? ' · 재고 0으로 ' + a.qty_removed.length + '건 뺌' : '') + '</p>';
     if (!a) {
-      var items = (s ? s.items : []).map(function (x) { return { item_cd: x.item_cd, item_nm: x.item_nm, lct_cd: x.lct_cd, qty: x.qty }; });
+      var items = (s ? s.items : []).map(function (x) { return { item_cd: x.item_cd, item_nm: x.item_nm, lct_cd: x.lct_cd, qty: x.qty, carry_from: x.carry_from }; });
       items.sort(function (x, y) { return (x.lct_cd || "~").localeCompare(y.lct_cd || "~") || x.item_cd.localeCompare(y.item_cd); });
       var locN = {}; items.forEach(function (x) { locN[x.lct_cd || ""] = 1; });
       return head +
@@ -1121,7 +1125,7 @@
     openSheet(
       '<div class="sheet-head"><button class="cancel" data-close>닫기</button><h2>재고 확인</h2><span></span></div>' +
       '<div class="sheet-loc mono-loc">' + esc(it.lct_cd || "위치 없음") + '</div>' +
-      '<div class="sheet-pn">' + esc(pn) + '</div>' +
+      '<div class="sheet-pn">' + esc(pn) + carryTag(it) + '</div>' +
       '<p class="sheet-sub">' + esc(it.item_nm) + '</p>' +
       '<div class="bigqty"><span>BMW + RR 합계</span><b>' + qtyNum(itemTotal(it)) + '</b><small>EA</small></div>' +
       '<div class="qsplit"><div><span>BMW</span><b>' + qtyNum(it.qty) + '</b></div><div><span>RR</span><b>' + (itemRrKnown(it) ? qtyNum(itemRr(it)) : "-") + '</b></div></div>' +
@@ -1331,8 +1335,8 @@
       title: REPORT_TITLE[a.kind], branch: state.user.branch + " 부품창고", period: periodLabel(a.kind, a),
       started_at: a.started_at, started_by: a.started_by_name, finished_at: a.finished_at, finished_by: a.finished_by_name, printed_at: new Date(),
       total: items.length, ok: items.length - diff.length - left.length, diff: diff.length, left: left.length,
-      diffItems: diff.map(function (it) { return { lct_cd: it.lct_cd, item_cd: it.item_cd, item_nm: it.item_nm, qty: it.qty, rr: itemRr(it), counted: it.counted, by: it.checked_by_name, memo: it.memo }; }),
-      leftItems: left.map(function (it) { return { lct_cd: it.lct_cd, item_cd: it.item_cd, item_nm: it.item_nm, qty: it.qty, rr: itemRr(it) }; }),
+      diffItems: diff.map(function (it) { return { lct_cd: it.lct_cd, item_cd: it.item_cd, item_nm: it.item_nm + (it.carry_from ? " (" + carryLabel(it) + ")" : ""), qty: it.qty, rr: itemRr(it), counted: it.counted, by: it.checked_by_name, memo: it.memo }; }),
+      leftItems: left.map(function (it) { return { lct_cd: it.lct_cd, item_cd: it.item_cd, item_nm: it.item_nm + (it.carry_from ? " (" + carryLabel(it) + ")" : ""), qty: it.qty, rr: itemRr(it) }; }),
       removedItems: (a.qty_removed || []).map(function (x) { return { lct_cd: x.lct_cd, item_cd: x.item_cd, item_nm: x.item_nm, qty: x.qty, rr: x.rr_qty, at: x.removed_at, by: x.removed_by }; })
     };
   }
