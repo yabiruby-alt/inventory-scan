@@ -1057,10 +1057,10 @@
     var canRefresh = a && !a.finished_at && state.auditItems.some(function (it) { return !it.status; });
     var head = '<button class="rback" id="auditBack">' + BACK + '재고조사</button>' +
       '<div class="rhead"><div class="rmain rtitle-row"><h2 class="rtitle">' + AUDIT_TITLE[k] + '</h2>' +
-        (canRefresh ? '<button class="title-btn" id="auditRefresh" aria-label="남은 부품 수량을 최근 DMS 현재고로 갱신">' + REFRESH + 'DMS 갱신</button>' : '') +
+        (canRefresh ? '<button class="title-btn" id="auditRefresh" aria-label="남은 부품 수량·위치를 최근 DMS 현재고로 갱신">' + REFRESH + 'DMS 갱신</button>' : '') +
       '</div></div>' +
       '<p class="meta" style="margin-bottom:12px">' + periodLabel(k, s) + (a ? ' · ' + hhmm(a.started_at) + ' 시작' : '') +
-        (a && a.qty_refreshed_at ? ' · 수량 ' + hhmm(a.qty_basis_at || a.qty_refreshed_at) + ' DMS 기준' : '') + '</p>';
+        (a && a.qty_refreshed_at ? ' · 수량·위치 ' + hhmm(a.qty_basis_at || a.qty_refreshed_at) + ' DMS 기준' : '') + '</p>';
     if (!a) {
       var items = (s ? s.items : []).map(function (x) { return { item_cd: x.item_cd, item_nm: x.item_nm, lct_cd: x.lct_cd, qty: x.qty }; });
       items.sort(function (x, y) { return (x.lct_cd || "~").localeCompare(y.lct_cd || "~") || x.item_cd.localeCompare(y.item_cd); });
@@ -1292,7 +1292,7 @@
       '<button class="btn-primary" id="auditReopenOk">다시 시작</button>'
     );
   }
-  // 남은(확인 안 한) 부품만 최근 DMS 현재고(BMW·RR)로 수량을 바꿈. 확인한 부품은 그대로 (inv_refresh_audit)
+  // 남은(확인 안 한) 부품만 최근 DMS 현재고(BMW·RR)로 수량·위치를 바꿈. 확인한 부품은 그대로 (inv_refresh_audit)
   async function refreshAudit(btn) {
     var a = currentAudit();
     if (!a || btn.classList.contains("busy")) return;
@@ -1306,7 +1306,7 @@
     } catch (e) { toast("목록을 다시 불러오지 못했습니다: " + e.message); }
     render(false);
     var na = currentAudit(), at = na && na.qty_basis_at ? hhmm(na.qty_basis_at) : basis();
-    toast(r.data ? "남은 부품 " + r.data + "건 수량을 " + at + " DMS 기준으로 바꿨습니다" : "남은 부품 수량이 " + at + " DMS와 같습니다");
+    toast(r.data ? "남은 부품 " + r.data + "건 수량·위치를 " + at + " DMS 기준으로 바꿨습니다" : "남은 부품 수량·위치가 " + at + " DMS와 같습니다");
   }
 
   async function reopenAudit(btn) {
