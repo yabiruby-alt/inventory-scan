@@ -1060,7 +1060,8 @@
         (canRefresh ? '<button class="title-btn" id="auditRefresh" aria-label="남은 부품 수량·위치를 최근 DMS 현재고로 갱신">' + REFRESH + 'DMS 갱신</button>' : '') +
       '</div></div>' +
       '<p class="meta" style="margin-bottom:12px">' + periodLabel(k, s) + (a ? ' · ' + hhmm(a.started_at) + ' 시작' : '') +
-        (a && a.qty_refreshed_at ? ' · 수량·위치 ' + hhmm(a.qty_basis_at || a.qty_refreshed_at) + ' DMS 기준' : '') + '</p>';
+        (a && a.qty_refreshed_at ? ' · 수량·위치 ' + hhmm(a.qty_basis_at || a.qty_refreshed_at) + ' DMS 기준' : '') +
+        (a && a.qty_removed && a.qty_removed.length ? ' · 재고 0으로 ' + a.qty_removed.length + '건 뺌' : '') + '</p>';
     if (!a) {
       var items = (s ? s.items : []).map(function (x) { return { item_cd: x.item_cd, item_nm: x.item_nm, lct_cd: x.lct_cd, qty: x.qty }; });
       items.sort(function (x, y) { return (x.lct_cd || "~").localeCompare(y.lct_cd || "~") || x.item_cd.localeCompare(y.item_cd); });
@@ -1108,6 +1109,8 @@
       render(false); scrollToResult();
       return;
     }
+    var gone = (currentAudit().qty_removed || []).filter(function (x) { return x.item_cd === code; })[0];
+    if (gone) { toast("DMS 재고 0이라 목록에서 뺀 부품입니다. 실물이 있으면 스캔 탭에서 수량 다름으로 체크하세요"); return; }
     toast("이 조사 목록에 없는 바코드입니다: " + code);
   }
 
@@ -1306,7 +1309,9 @@
     } catch (e) { toast("목록을 다시 불러오지 못했습니다: " + e.message); }
     render(false);
     var na = currentAudit(), at = na && na.qty_basis_at ? hhmm(na.qty_basis_at) : basis();
-    toast(r.data ? "남은 부품 " + r.data + "건 수량·위치를 " + at + " DMS 기준으로 바꿨습니다" : "남은 부품 수량·위치가 " + at + " DMS와 같습니다");
+    var res = r.data || {}, ch = Number(res.changed) || 0, rm = Number(res.removed) || 0;
+    toast(ch || rm ? at + " DMS 기준 · " + [ch ? "수량·위치 " + ch + "건 바꿈" : "", rm ? "재고 0인 " + rm + "건 뺌" : ""].filter(Boolean).join(" · ")
+      : "남은 부품 수량·위치가 " + at + " DMS와 같습니다");
   }
 
   async function reopenAudit(btn) {
@@ -1327,7 +1332,8 @@
       started_at: a.started_at, started_by: a.started_by_name, finished_at: a.finished_at, finished_by: a.finished_by_name, printed_at: new Date(),
       total: items.length, ok: items.length - diff.length - left.length, diff: diff.length, left: left.length,
       diffItems: diff.map(function (it) { return { lct_cd: it.lct_cd, item_cd: it.item_cd, item_nm: it.item_nm, qty: it.qty, rr: itemRr(it), counted: it.counted, by: it.checked_by_name, memo: it.memo }; }),
-      leftItems: left.map(function (it) { return { lct_cd: it.lct_cd, item_cd: it.item_cd, item_nm: it.item_nm, qty: it.qty, rr: itemRr(it) }; })
+      leftItems: left.map(function (it) { return { lct_cd: it.lct_cd, item_cd: it.item_cd, item_nm: it.item_nm, qty: it.qty, rr: itemRr(it) }; }),
+      removedItems: (a.qty_removed || []).map(function (x) { return { lct_cd: x.lct_cd, item_cd: x.item_cd, item_nm: x.item_nm, qty: x.qty, rr: x.rr_qty, at: x.removed_at, by: x.removed_by }; })
     };
   }
   // 파일 이름: "261007 일일 재고조사 보고서", "260928-1003 주간 재고조사 보고서"
@@ -1428,6 +1434,16 @@
         var it = findAuditItem(p.new.item_cd);
         if (!it) return;
         Object.assign(it, p.new);
+        auditCounts[id] = auditStatsOf(state.auditItems);
+        if (state.tab === "audit" && $("sheet").hidden) render(false);
+      })
+      // DMS 갱신으로 재고 0인 부품이 빠지면 (삭제 알림은 거를 수 없어 조사 번호로 확인)
+      .on("postgres_changes", { event: "DELETE", schema: "public", table: "inv_audit_items" }, function (p) {
+        var o = p.old || {};
+        if (o.audit_id !== id) return;
+        var before = state.auditItems.length;
+        state.auditItems = state.auditItems.filter(function (x) { return x.item_cd !== o.item_cd; });
+        if (state.auditItems.length === before) return;
         auditCounts[id] = auditStatsOf(state.auditItems);
         if (state.tab === "audit" && $("sheet").hidden) render(false);
       })

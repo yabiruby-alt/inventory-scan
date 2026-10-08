@@ -63,7 +63,8 @@
   /**
    * 보고서 내용을 블록 목록으로 만든다. 블록은 그대로 놓이고, 표({head, rows})는 줄 단위로 쪽을 나눈다.
    * d: {title, branch, period, started_at, started_by, finished_at, finished_by, printed_at,
-   *     total, ok, diff, left, diffItems[{lct_cd,item_cd,item_nm,qty,rr,counted,by,memo}], leftItems[{lct_cd,item_cd,item_nm,qty,rr}]}
+   *     total, ok, diff, left, diffItems[{lct_cd,item_cd,item_nm,qty,rr,counted,by,memo}], leftItems[{lct_cd,item_cd,item_nm,qty,rr}],
+   *     removedItems[{lct_cd,item_cd,item_nm,qty,rr,at,by}] (DMS 갱신 때 재고 0으로 뺀 부품)}
    *   qty = BMW(DMS) 수량, rr = RR 수량. 차이 = 실사 - (BMW + RR)
    */
   function blocks(d) {
@@ -99,6 +100,19 @@
         })
       } });
     } else out.push({ html: '<div class="rp-none">모두 확인했습니다</div>' });
+
+    // DMS 갱신 때 재고 0이 되어 목록에서 뺀 부품 (조사 시작 때 수량)
+    var rm = d.removedItems || [];
+    if (rm.length) {
+      out.push({ html: '<h2 class="rp-h">DMS 재고 0으로 제외 ' + rm.length + '건</h2>' });
+      out.push({ table: {
+        head: '<colgroup><col style="width:22mm"><col style="width:32mm"><col><col style="width:18mm"><col style="width:30mm"></colgroup>' +
+          '<thead><tr><th>위치</th><th>품번</th><th>품명</th><th class="n">시작 수량</th><th>제외</th></tr></thead>',
+        rows: rm.map(function (it) {
+          return '<tr><td class="m">' + esc(it.lct_cd || "-") + '</td><td class="m">' + esc(it.item_cd) + '</td><td>' + esc(it.item_nm) + '</td><td class="n">' + num(Number(it.qty) + (Number(it.rr) || 0)) + '</td><td>' + ymdhm(it.at) + ' ' + esc(it.by || "") + '</td></tr>';
+        })
+      } });
+    }
 
     out.push({ html: '<div class="rp-sign"><div><span>담당</span><i></i></div><div><span>확인</span><i></i></div><div><span>승인</span><i></i></div></div>' });
     return out;
