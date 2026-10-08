@@ -391,3 +391,12 @@ button.row:active, .row-btn:active { background: var(--fill); }
 .sug-qty small { font-size: var(--fs-xs); font-weight: 500; color: var(--label2); margin-left: 2px; }
 /* 일일장기 이월 표시 (품번 옆 작은 꼬리표) */
 .tag.carry { height: 18px; padding-inline: 6px; margin-left: 6px; vertical-align: 2px; font-family: var(--font); letter-spacing: 0; }
+
+/* 부품별 마지막 재고조사 (참고용, 작게) */
+.lastaudit { margin-top: auto; padding-top: 12px; font-size: var(--fs-xs); line-height: 1.45; color: var(--label2); font-variant-numeric: tabular-nums; }
+.lastaudit .la-head { color: var(--label3); }
+.lastaudit .la-memo { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.lastaudit-line { text-align: center; margin: 0 0 4px; font-size: var(--fs-xs); color: var(--label2); font-variant-numeric: tabular-nums; }
+.la-ok { color: var(--ok); font-weight: 600; }
+.la-diff { color: var(--warn); font-weight: 600; }
+.la-dim { color: var(--label3); }

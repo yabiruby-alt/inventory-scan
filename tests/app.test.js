@@ -50,6 +50,8 @@ function check(name, ok, extra) { results.push((ok ? 'PASS ' : 'FAIL ') + name +
   parts.push({ item_cd: 'PN20000', item_nm: '다른', lct_cd: 'B000001', crt_qty: 2, alois_cd: null, last_purc_dt: null, updated_at: iso(now - 600000) });
   const src = { kind: 'weekly', period_start: '2026-09-28', period_end: '2026-10-03', items: [], updated_at: iso(now) };
   let stockResult = { found: true, crt_qty: 1, lct_cd: 'B000001', rdc_qty: 0 };
+  // 지난 재고조사 기록 (다른 조사)
+  const auditHist = [{ item_cd: 'PN10000', audit_id: 'old-1', status: 'diff', counted: 4, qty: 5, rr_qty: 0, checked_at: '2026-10-05T02:00:00Z', checked_by_name: '김확인', memo: '박스 파손', inv_audits: { kind: 'daily' } }];
   const audit = { id: 'aaaaaaaa-0000-0000-0000-000000000001', kind: 'weekly', period_start: '2026-09-28', period_end: '2026-10-03', item_count: 3, finished_at: null, started_by: USER.id, started_by_name: '시험', started_at: iso(now - 3600000) };
   const auditItems = [
     { audit_id: audit.id, item_cd: 'PN10000', item_nm: '부품0', lct_cd: 'A140112', qty: 1, status: null, counted: null, memo: null, checked_by_name: null, checked_at: null },
@@ -92,6 +94,10 @@ function check(name, ok, extra) { results.push((ok ? 'PASS ' : 'FAIL ') + name +
     if (t === 'rpc/inv_reopen_audit') { Object.assign(audit, { finished_at: null, finished_by_name: null, reopened_at: iso(Date.now()), reopened_by_name: '시험' }); return json(null, 204); }
     if (t === 'rpc/inv_finish_audit') { Object.assign(audit, { finished_at: iso(Date.now()), finished_by_name: '시험' }); return json(null, 204); }
     if (t === 'inv_audit_items') {
+      if (m === 'GET' && u.searchParams.get('item_cd')) {   // 부품별 마지막 재고조사
+        const pn = u.searchParams.get('item_cd').replace('eq.', '');
+        return json(auditHist.filter(h => h.item_cd === pn).concat(auditItems.filter(x => x.item_cd === pn && x.status).map(x => Object.assign({ audit_id: audit.id, inv_audits: { kind: audit.kind } }, x))).sort((a, b) => b.checked_at.localeCompare(a.checked_at)));
+      }
       if (m === 'GET') return json(auditItems);
       if (m === 'PATCH') {
         if (failAuditPatch) return route.abort('internetdisconnected');
@@ -291,6 +297,9 @@ function check(name, ok, extra) { results.push((ok ? 'PASS ' : 'FAIL ') + name +
   const rr1 = await page.textContent('#rrTile');
   check('부품 화면에 RR 재고 바로 표시', rr1.includes('4') && rr1.includes('R010101') && rr1.includes('기준') && !(await page.$('#rrTile button')), rr1);
   check('RR 재고 보려고 요청 보내지 않음', !reqPosts.length, JSON.stringify(reqPosts));
+  await page.waitForFunction(() => { const e = document.querySelector('.lastaudit'); return e && !e.textContent.includes('확인 중'); });
+  const la = await page.textContent('.lastaudit');
+  check('부품 화면: 지점 현재고 밑에 마지막 재고조사', la.includes('마지막 재고조사') && /\d+\/\d+/.test(la) && (la.includes('일치') || la.includes('수량 다름')), la);
   if (process.env.SHOTS) await page.screenshot({ path: path.join(process.env.SHOTS, 'rr.png') });
   await page.fill('#manualInput', 'PN10001');
   await page.press('#manualInput', 'Enter');
@@ -375,6 +384,9 @@ function check(name, ok, extra) { results.push((ok ? 'PASS ' : 'FAIL ') + name +
   const ash = await page.textContent('#sheet');
   const qs = await page.$eval('#sheet .qsplit', e => e.textContent);
   check('확인 창에 합계와 BMW·RR 따로', ash.includes('BMW + RR 합계') && qs === 'BMW1RR4', qs);
+  await page.waitForFunction(() => { const e = document.querySelector('#sheet .lastaudit-line'); return e && !e.textContent.includes('확인 중'); });
+  const lal = await page.textContent('#sheet .lastaudit-line');
+  check('재고 확인 창: 지금 조사는 빼고 지난 재고조사 (작게)', lal === '지난 재고조사 10/5 일일 · 수량 다름 실사 4 / DMS 5 · 김확인', lal);
   await page.click('#aDiffToggle');
   check('실사 수량 기본값 = 합계', (await page.inputValue('#aCountIn')) === '5');
   await page.click('#aDiffSave');   // 합계와 같으면 일치
@@ -389,6 +401,8 @@ function check(name, ok, extra) { results.push((ok ? 'PASS ' : 'FAIL ') + name +
   check('수량 다름 체크에 RR 수량도 저장', ck && ck.dms_qty === 1 && ck.rr_qty === 4 && ck.counted_qty === 3, JSON.stringify(ck));
   await page.click('[data-aitem="PN10002"]');
   const qs0 = await page.$eval('#sheet .qsplit', e => e.textContent);
+  await page.waitForFunction(() => { const e = document.querySelector('#sheet .lastaudit-line'); return e && !e.textContent.includes('확인 중'); });
+  check('이력 없으면 "이전 재고조사 이력 없음"', (await page.textContent('#sheet .lastaudit-line')) === '이전 재고조사 이력 없음');
   check('확인 창에 품번 크게', (await page.$eval('#sheet .sheet-pn', e => e.textContent + ' ' + getComputedStyle(e).fontSize)) === 'PN10002 24px');
   if (process.env.SHOTS) await page.screenshot({ path: path.join(process.env.SHOTS, 'audit_sheet.png') });
   // ===== 재고 확인 창: 지금 DMS 재고 조회 (조사 시작 뒤 출고) =====
