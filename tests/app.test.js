@@ -228,6 +228,17 @@ function check(name, ok, extra) { results.push((ok ? 'PASS ' : 'FAIL ') + name +
   const open2 = checks.filter(c => c.item_cd === 'PN10001' && !c.cleared_at);
   check('일치로 바꾸면 체크 기록 지움', open2.length === 0, 'open=' + open2.length);
   check('지울 때 이름은 보내지 않음 (서버가 채움)', checks.every(c => !('cleared_by_name' in c)));
+  // 되돌리기: 방금 누른 '일치'를 되돌리면 전 상태(수량 다름 6)로, 창이 다시 열림
+  const ut = await page.textContent('#toastText');
+  check('저장 알림에 되돌리기', ut.includes('PN10001 · 일치로 저장했습니다') && !!(await page.$('.toast-undo')), ut);
+  await page.click('.toast-undo');
+  await page.waitForTimeout(400);
+  const u1 = auditItems.find(x => x.item_cd === 'PN10001');
+  const uc = checks.filter(c => c.item_cd === 'PN10001' && !c.cleared_at);
+  check('되돌리면 전 상태로 (수량 다름 6, 체크 기록 다시)', u1.status === 'diff' && Number(u1.counted) === 6 && uc.length === 1 && uc[0].counted_qty === 6, JSON.stringify({ s: u1.status, c: u1.counted, open: uc.length }));
+  check('되돌리면 그 부품 창이 다시 열림', await page.isVisible('#aOk') && (await page.textContent('#sheet .ai-pn')) === 'PN10001');
+  await page.click('#aOk');
+  await page.waitForTimeout(300);
 
   // ===== 재고조사 종료 → 보고서 → PDF =====
   await mark('PN10001', true, 5);   // 수량 다름 1, 미확인 1 (PN10002), 일치 1

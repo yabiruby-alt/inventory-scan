@@ -431,3 +431,6 @@ button.row:active, .row-btn:active { background: var(--fill); }
 .ai-lock .ai-link { margin-top: 8px; font-size: var(--fs-sm); font-weight: 500; }
 .ai-exempt { margin-top: 10px; background: var(--bg); text-align: left; }
 .ai-lock .btn-ghost { margin-top: 10px; }
+
+/* 알림 속 되돌리기 */
+.toast-undo { margin-left: 12px; padding: 2px 0; color: #64D2FF; font-weight: 600; font-size: inherit; }

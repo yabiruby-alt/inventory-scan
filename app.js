@@ -95,15 +95,29 @@
   var toastTimer;
   // 화면 위쪽 작은 알림. 결과가 화면에 바로 보이는 동작에는 띄우지 않고, 오류·안 보이는 결과만. 누르면 닫힘
   var TOAST_ERR = /실패|못했|없는|아닙니다|입력하세요|필요합니다|않습니다|눌러 주세요/;
+  var undoFn = null;
   function toast(msg) {
     var err = TOAST_ERR.test(msg);
+    undoFn = null;
     $("toastText").textContent = msg;
     $("toast").classList.toggle("err", err);
     $("toast").hidden = false;
     clearTimeout(toastTimer);
     toastTimer = setTimeout(function () { $("toast").hidden = true; }, err ? 3000 : 1600);
   }
-  $("toast").addEventListener("click", function () { clearTimeout(toastTimer); $("toast").hidden = true; });
+  $("toast").addEventListener("click", function (e) {
+    var fn = e.target.closest(".toast-undo") && undoFn;
+    undoFn = null; clearTimeout(toastTimer); $("toast").hidden = true;
+    if (fn) fn();
+  });
+  // 저장 알림 + 되돌리기 (5초 동안, 잘못 눌렀을 때)
+  function toastUndo(msg, fn) {
+    toast(msg);
+    $("toastText").innerHTML = esc(msg) + '<button class="toast-undo">되돌리기</button>';
+    undoFn = fn;
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(function () { undoFn = null; $("toast").hidden = true; }, 5000);
+  }
 
   // 스캔 성공 소리·진동
   var audioCtx = null;
@@ -1071,7 +1085,7 @@
         (it.status === "ok" ? '<span class="pill ok">일치</span>'
         : it.status === "diff" ? '<span class="pill warn">실사 ' + qtyNum(it.counted) + '</span>' : '');
       html += '<button class="row' + (it.status ? " done" : "") + '" data-aitem="' + esc(it.item_cd) + '"' + (started ? '' : ' disabled') + '>' +
-        '<div class="row-main"><div class="pn">' + esc(it.item_cd) + carryTag(it) + '</div><div class="row-sub">' + esc(it.item_nm) + (it.checked_by_name ? ' · ' + esc(it.checked_by_name) : '') + '</div>' + splitNote(it.qty, itemRr(it)) + movedNote(it) + '</div>' +
+        '<div class="row-main"><div class="pn">' + esc(it.item_cd) + carryTag(it) + '</div><div class="row-sub">' + esc(it.item_nm) + (it.status && it.checked_by_name ? ' · ' + esc(it.checked_by_name) : '') + '</div>' + splitNote(it.qty, itemRr(it)) + movedNote(it) + '</div>' +
         '<div class="qty">' + qtyNum(itemTotal(it)) + '<small>EA</small></div>' + mark + '</button>';
     });
     return html + '</div>';
@@ -1281,11 +1295,15 @@
     if (!pf) { toast("위치를 먼저 스캔하세요"); openAuditItem(pn); return; }
     var job = { userId: state.user.id, auditId: a.id, kind: a.kind, pn: pn, status: status, counted: counted, memo: memo || null, tries: 0,
       proof: { loc_via: pf.via, loc_scanned_at: pf.at, marked_at: new Date().toISOString(), exempt_reason: pf.reason || null } };
+    // 되돌리기용: 누르기 전 상태
+    var before = { userId: job.userId, auditId: a.id, kind: a.kind, pn: pn, status: it.status || null, counted: it.status === "diff" ? it.counted : null, memo: it.status ? it.memo || null : null, tries: 0,
+      proof: { loc_via: it.loc_via || null, loc_scanned_at: it.loc_scanned_at || null, marked_at: it.marked_at || null, exempt_reason: it.exempt_reason || null } };
     delete sheetExempt[pn];
     var res = await sendAuditMark(job);
+    var saved = status === "ok" ? "일치로 저장했습니다" : "실사 " + qtyNum(counted) + "개로 저장했습니다";
     if (res === "net") {
       queueAuditMark(job);
-      toast("연결이 불안정해 휴대폰에 저장했습니다. 연결되면 자동으로 보냅니다");
+      saved = "휴대폰에 저장했습니다 (연결되면 보냄)";
     } else if (res !== "ok" && res !== "check") {
       await loadAudits();
       if (currentAudit() && currentAudit().finished_at) { closeSheet(); render(false); toast("이미 종료된 조사라 저장하지 못했습니다"); return; }
@@ -1293,7 +1311,23 @@
     }
     auditCounts[a.id] = auditStatsOf(state.auditItems);
     closeSheet(); render(false);
-    if (res === "check") toast("조사 결과는 저장했지만 체크 기록에 반영하지 못했습니다. 다시 저장해 주세요");
+    if (res === "check") { toast("조사 결과는 저장했지만 체크 기록에 반영하지 못했습니다. 다시 저장해 주세요"); return; }
+    toastUndo(pn + " · " + saved, function () { undoAudit(before); });
+  }
+  // 되돌리기: 누르기 전 상태로 되돌리고 그 부품 창을 다시 엶
+  async function undoAudit(job) {
+    var a = currentAudit();
+    if (!a || a.id !== job.auditId || a.finished_at) { toast("되돌릴 수 없습니다 (조사가 바뀌었거나 종료됨)"); return; }
+    var res = await sendAuditMark(job);
+    if (res === "net") queueAuditMark(job);
+    else if (res !== "ok" && res !== "check") { toast("되돌리지 못했습니다: " + res); return; }
+    var it = findAuditItem(job.pn);
+    if (it && !job.status) Object.assign(it, { status: null, counted: null, memo: null });
+    auditCounts[a.id] = auditStatsOf(state.auditItems);
+    delete lastAudits[job.pn];
+    render(false);
+    toast("되돌렸습니다");
+    if (it) openAuditItem(job.pn);
   }
 
   // 전파가 약한 곳: 보내지 못한 재고조사 확인을 이 휴대폰에 두었다가 연결되면 다시 보냄
