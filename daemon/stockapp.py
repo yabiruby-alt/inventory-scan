@@ -261,7 +261,7 @@ def on_cycle(page, ctx: dict) -> None:
 
     # 3) 상태
     _rest("POST", "inv_status?on_conflict=branch",
-          {"branch": branch, "parts_at": now, "lists_at": now, "daemon_seen_at": now},
+          {"branch": branch, "parts_at": now, "lists_at": now, "daemon_seen_at": now, "dms_error": None},
           "resolution=merge-duplicates,return=minimal")
     _S.last_beat = time.time()
     _log(f"업로드: 현재고 {len(rows)}건 (변경 {len(changed)}건), 일일 {len(lists['daily']['items'])}건, 주간 {len(lists['weekly']['items'])}건")
@@ -314,14 +314,18 @@ def _upload_rr(ctx: dict, branch: str, now: str) -> int:
     if rp is None:
         raise RuntimeError("RR DMS 창이 없습니다 (partsbay 의 RR 연동이 꺼져 있음)")
     try:
-        pb.click_menu(rp, "icon-parts", "현재고리스트 조회")
+        if hasattr(pb, "open_screen"):
+            rp.wait_for_selector("#icon-parts", timeout=1500, state="attached")   # 로그인 확인
+            frame = pb.open_screen(rp, "icon-parts", "현재고리스트 조회", "selectInventListMain")
+        else:
+            pb.click_menu(rp, "icon-parts", "현재고리스트 조회")
+            frame = pb.wait_for_frame(rp, "selectInventListMain")
     except Exception as e:
         raise RuntimeError(f"RR DMS 메뉴를 열지 못했습니다 — RR DMS 로그인 확인 필요 ({type(e).__name__})")
-    frame = pb.wait_for_frame(rp, "selectInventListMain")
     codes = _cfg().get("rr") or {}
     if not all(codes.get(k) for k in ("corp_cd", "biz_area_cd", "brch_cd")):
         rp.wait_for_timeout(1500)   # 검색칸이 채워질 때까지
-        codes = frame.evaluate(_RR_CODES_JS)
+        codes = (frame.menu_frame() if hasattr(frame, "menu_frame") else frame).evaluate(_RR_CODES_JS)   # 입력칸 값은 화면이 필요
     if not codes.get("corp_cd"):
         raise RuntimeError(f"RR 지점 코드를 알 수 없습니다 (설정 파일에 rr 코드를 넣어 주세요): {codes}")
     body = {
@@ -341,6 +345,20 @@ def _upload_rr(ctx: dict, branch: str, now: str) -> int:
 # 대기 중: 앱 요청 처리
 # ------------------------------------------------------------
 
+def _dms_problem(page):
+    """DMS 창 상태. 정상이면 None, 아니면 앱에 보여 줄 이유"""
+    try:
+        if page.is_closed():
+            return "DMS 브라우저 창이 닫혔습니다. 데몬 PC에서 프로그램을 다시 시작하고 로그인해 주세요"
+        if not page.evaluate("() => !!document.querySelector('#icon-parts')"):
+            return "DMS 로그인이 풀렸습니다. 데몬 PC의 DMS 창에서 다시 로그인해 주세요"
+        return None
+    except Exception as e:
+        if type(e).__name__ == "TargetClosedError":
+            return "DMS 브라우저 창이 닫혔습니다. 데몬 PC에서 프로그램을 다시 시작하고 로그인해 주세요"
+        return None   # 화면 이동 중 같은 잠깐의 오류는 이상으로 보지 않음
+
+
 def poll(page) -> None:
     t = time.time()
     if t - _S.last_poll < POLL_EVERY_SEC or not CONFIG.exists():
@@ -351,7 +369,8 @@ def poll(page) -> None:
             return
         branch = _cfg()["branch"]
         if t - _S.last_beat >= HEARTBEAT_EVERY_SEC:
-            _rest("PATCH", f"inv_status?branch=eq.{_q(branch)}", {"daemon_seen_at": _now_iso()})
+            # 프로그램은 살아 있어도 DMS 브라우저가 닫혔거나 로그인이 풀렸으면 앱에 이유를 알림
+            _rest("PATCH", f"inv_status?branch=eq.{_q(branch)}", {"daemon_seen_at": _now_iso(), "dms_error": _dms_problem(page)})
             _S.last_beat = t
         # 데몬이 멈춘 동안 쌓인 요청은 버림 (늦게 실행된 위치 변경이 DMS를 바꾸지 않게)
         # (매초 하지 않고 30초마다 — 요청 확인을 가볍게)
@@ -403,6 +422,8 @@ def _handle(page, branch: str, req: dict) -> None:
 def _own_frame(page):
     """현재고리스트 화면 — 이미 열려 있으면 메뉴를 다시 누르지 않고 그대로 씀 (빠름)"""
     import __main__ as pb
+    if hasattr(pb, "open_screen"):   # 메뉴 없이 직접 조회 (실패하면 알아서 메뉴 방식으로 전환)
+        return pb.open_screen(page, "icon-parts", "현재고리스트 조회", "selectInventListMain")
     for f in page.frames:
         if "selectInventListMain" in f.url and not f.is_detached():
             return f

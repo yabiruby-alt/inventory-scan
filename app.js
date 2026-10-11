@@ -16,6 +16,7 @@
   var STATUS_POLL_MS = 60000;         // 데몬 상태·재고 갱신 확인 주기
   var DAEMON_STALE_MS = 3 * 60000;    // 데몬 응답이 이보다 오래되면 경고
   var REQ_POLL_MS = 700;              // 요청 처리 결과 확인 주기
+  var REQ_POLL_LIVE_MS = 2500;        // 실시간 알림이 연결돼 있을 때의 확인 주기 (알림을 놓쳤을 때 대비)
   var REQ_GIVEUP_MS = 10 * 60000;     // 이만큼 기다려도 데몬이 안 가져가면 요청 취소 (데몬도 10분 지난 요청은 버림)
   var APP_VER = ((document.currentScript && document.currentScript.src || "").match(/[?&]v=(\d+)/) || [])[1];
   var GROUPS ={ A: "상시재고", L: "로컬조달", O: "특수/단종계열", I: "비이동성", S: "특수발주" };
@@ -74,9 +75,20 @@
   function isLoc(code) { return looksLoc(code) && !!state.locs[code]; }
   function partsAt(loc) { return (state.locs[loc] || []).map(function (k) { return state.parts[k]; }); }
   function basis() { return state.status && state.status.parts_at ? hhmm(state.status.parts_at) : "--:--"; }
+  // 데몬에 요청을 보낼 수 없는 상태: 응답이 끊겼거나, 프로그램은 살아 있어도 DMS 창이 닫힘·로그인 풀림(dms_error)
   function daemonStale() {
     if (!state.status || !state.status.daemon_seen_at) return true;
+    if (state.status.dms_error) return true;
     return Date.now() - new Date(state.status.daemon_seen_at).getTime() > DAEMON_STALE_MS;
+  }
+  function daemonWhy() { return (state.status && state.status.dms_error) || "DMS 연결 PC가 응답하지 않습니다"; }
+  // 데몬은 살아 있는데 재고가 오래 안 올라옴 (갱신이 계속 실패하는 경우)
+  var PARTS_STALE_MS = 25 * 60000;
+  function partsStaleMin() {
+    var at = state.status && state.status.parts_at;
+    if (!at || daemonStale()) return 0;
+    var ms = Date.now() - new Date(at).getTime();
+    return ms > PARTS_STALE_MS ? Math.round(ms / 60000) : 0;
   }
   // RR 현재고 문제: 데몬이 RR 을 못 올렸으면 그 이유, 25분 넘게 안 올라왔으면 오래됨
   var RR_STALE_MS = 25 * 60000;
@@ -269,30 +281,49 @@
     return !daemonStale();
   }
   async function sendRequest(kind, pn, params) {
-    if (!(await daemonReady())) throw new Error("DMS 연결 PC가 응답하지 않습니다");
+    if (!(await daemonReady())) throw new Error(daemonWhy());
     var r = await sb.from("inv_requests").insert({ kind: kind, item_cd: pn, params: params || {} }).select("id").single();
     if (r.error) throw r.error;
     return r.data.id;
   }
+  // 결과 받기: 데몬이 처리하는 즉시 실시간 알림으로 받고, 알림을 못 받는 경우에 대비해 주기적으로도 확인
+  var reqChannel = null, reqLive = false, reqKick = {};
+  function ensureReqChannel() {
+    if (reqChannel || !state.user) return;
+    reqChannel = sb.channel("req-" + state.user.id)
+      .on("postgres_changes", { event: "UPDATE", schema: "public", table: "inv_requests" }, function (p) {
+        var n = p.new || {}, k = reqKick[n.id];
+        if (k && (n.status === "done" || n.status === "failed" || n.status === "cancelled")) k();
+      })
+      .subscribe(function (st) { reqLive = st === "SUBSCRIBED"; });
+  }
+  function dropReqChannel() { if (reqChannel) { sb.removeChannel(reqChannel); reqChannel = null; } reqLive = false; reqKick = {}; }
   function waitRequest(id, onDone) {
-    var since = Date.now();
-    (function tick() {
+    var since = Date.now(), timer = null, finished = false;
+    function finish(res) { if (finished) return; finished = true; clearTimeout(timer); delete reqKick[id]; onDone(res); }
+    function tick() {
       sb.from("inv_requests").select("status,result,error").eq("id", id).single().then(async function (r) {
+        if (finished) return;
         var st = !r.error && r.data.status;
-        if (st === "done" || st === "failed") { onDone(r.data); return; }
-        if (st === "cancelled") { onDone({ status: "failed", error: r.data.error || "취소된 요청입니다" }); return; }
+        if (st === "done" || st === "failed") { finish(r.data); return; }
+        if (st === "cancelled") { finish({ status: "failed", error: r.data.error || "취소된 요청입니다" }); return; }
         var waited = Date.now() - since;
         // 오래 기다렸는데 아직 대기 중이면 취소 (데몬이 이미 가져가 처리 중이면 취소되지 않으니 결과를 더 기다림)
         if (st === "pending" && waited > REQ_GIVEUP_MS) {
           var c = await sb.rpc("inv_cancel_request", { p_id: id });
-          if (!c.error && c.data) { onDone({ status: "failed", error: "응답이 없어 취소했습니다 (DMS 연결 PC 확인 필요)" }); return; }
+          if (!c.error && c.data) { finish({ status: "failed", error: "응답이 없어 취소했습니다 (DMS 연결 PC 확인 필요)" }); return; }
         }
         if (waited > 2 * REQ_GIVEUP_MS) {
-          onDone({ status: "failed", error: "처리 결과를 확인하지 못했습니다" }); return;
+          finish({ status: "failed", error: "처리 결과를 확인하지 못했습니다" }); return;
         }
-        setTimeout(tick, REQ_POLL_MS);
+        if (finished) return;
+        clearTimeout(timer);
+        timer = setTimeout(tick, reqLive ? REQ_POLL_LIVE_MS : REQ_POLL_MS);
       });
-    })();
+    }
+    ensureReqChannel();
+    reqKick[id] = function () { if (!finished) { clearTimeout(timer); tick(); } };
+    tick();
   }
 
   function requestRdc(pn) {
@@ -781,7 +812,8 @@
 
   // ---------- 스캔 탭 ----------
   function daemonNotice() {
-    return daemonStale() ? '<div class="notice" style="margin:8px 0 0">DMS 연결 PC가 응답하지 않습니다. 재고는 ' + basis() + ' 기준이고, 연결될 때까지 RDC 조회·위치 변경은 할 수 없습니다.</div>' : '';
+    if (partsStaleMin()) return '<div class="notice" style="margin:8px 0 0">재고가 ' + partsStaleMin() + '분째 갱신되지 않았습니다 (' + basis() + ' 기준). 데몬 PC를 확인해 주세요.</div>';
+    return daemonStale() ? '<div class="notice" style="margin:8px 0 0">' + esc(daemonWhy()) + '. 재고는 ' + basis() + ' 기준이고, 연결될 때까지 RDC 조회·위치 변경은 할 수 없습니다.</div>' : '';
   }
   function viewIdle() {
     return '<div class="idle">' +
@@ -1784,7 +1816,7 @@
       '<div class="group">' +
         '<div class="row"><div class="row-main">현재고 기준 시각</div><span class="row-value">' + basis() + '</span></div>' +
         '<div class="row"><div class="row-main">부품창고 품목</div><span class="row-value">' + Object.keys(state.parts).length.toLocaleString() + '건</span></div>' +
-        '<div class="row"><div class="row-main">DMS 연결 PC</div><span class="row-value">' + (daemonStale() ? '<span style="color:var(--danger)">응답 없음</span>' : '<span class="dot" style="display:inline-block;margin-right:6px"></span>연결됨 · ' + hhmm(s.daemon_seen_at)) + '</span></div>' +
+        '<div class="row"><div class="row-main">DMS 연결 PC</div><span class="row-value">' + (daemonStale() ? '<span style="color:var(--danger)">' + (state.status && state.status.dms_error ? "DMS 확인 필요" : "응답 없음") + '</span>' : '<span class="dot" style="display:inline-block;margin-right:6px"></span>연결됨 · ' + hhmm(s.daemon_seen_at)) + '</span></div>' +
         '<div class="row"><div class="row-main">RR 현재고 기준 시각</div><span class="row-value">' + (rrBasis() || "-") + ' · ' + Object.keys(state.rrParts).length.toLocaleString() + '건</span></div>' +
         (rrProblem() ? '<div class="row"><div class="row-main">RR 현재고 문제</div></div><p class="footnote" style="color:var(--danger);margin:0;padding:0 16px 12px">' + esc(rrProblem()) + '</p>' : '') +
         '<div class="row"><div class="row-main">제외</div><span class="row-value">Z 서비스 코드</span></div>' +
@@ -1821,7 +1853,8 @@
     if (!navigator.onLine) return { c: "off", t: "오프라인", msg: "인터넷이 끊겼습니다. 재고조사 확인은 휴대폰에 두었다가 연결되면 자동으로 보냅니다" };
     var n = state.user ? (outbox || []).filter(function (j) { return j.userId === state.user.id; }).length : 0;
     if (n) return { c: "wait", t: "대기 " + n, msg: "아직 보내지 못한 확인 " + n + "건 — 연결되면 자동으로 보냅니다" };
-    if (state.status && daemonStale()) return { c: "dms", t: "DMS", msg: "DMS 연결 PC가 응답하지 않습니다. 재고는 " + basis() + " 기준이고 RDC 조회·위치 변경은 할 수 없습니다" };
+    if (state.status && daemonStale()) return { c: "dms", t: "DMS", msg: daemonWhy() + ". 재고는 " + basis() + " 기준이고 RDC 조회·위치 변경은 할 수 없습니다" };
+    if (partsStaleMin()) return { c: "dms", t: "DMS", msg: "재고가 " + partsStaleMin() + "분째 갱신되지 않았습니다 (" + basis() + " 기준). 데몬 PC를 확인해 주세요" };
     return { c: "ok", t: "", msg: "정상 연결 · 재고 " + basis() + " 기준" };
   }
   function netPill() {
@@ -2017,7 +2050,7 @@
         '<div class="row"><div class="row-main">현재 위치</div><span class="row-value mono-loc">' + esc(p.lct_cd || "없음") + '</span></div>' +
         '<div class="row"><div class="row-main">새 위치</div><input class="field" id="newLoc" style="text-align:right;width:55%;font-family:var(--mono)" placeholder="예: A140112" aria-label="새 위치" autocomplete="off" autocapitalize="characters"></div>' +
       '</div>' +
-      (daemonStale() ? '<div class="notice">DMS 연결 PC가 응답하지 않아 지금은 위치 변경을 저장할 수 없습니다.</div>' : '') +
+      (daemonStale() ? '<div class="notice">' + esc(daemonWhy()) + '. 지금은 위치 변경을 저장할 수 없습니다.</div>' : '') +
       '<p class="footnote">새 위치 라벨을 스캔해도 됩니다. 저장하면 DMS에 변경을 요청하고, 보통 몇 초 안에 반영됩니다. DMS 데이터 갱신 중이면 몇 분 걸릴 수 있습니다.</p>' +
       '<button class="btn-primary" id="saveMove" data-pn="' + esc(pn) + '" disabled>저장</button>'
     );
@@ -2327,6 +2360,7 @@
   async function logout() {
     stopCamera();
     await sb.auth.signOut();
+    dropReqChannel();
     state.user = null; state.result = []; state.tab = "scan"; state.parts = {}; state.locs = {}; state.checks = []; state.moveLog = null; state.rrParts = {}; state.rdc = {};
     render(true);
   }
