@@ -3,6 +3,31 @@
 통계 대시보드(`dsm-stats-dashboard`)에 **재고 관리(DS재고 관리 앱)** 메뉴를 만들 때 쓰는 자료.
 서버(Supabase `dongsung-parts-tablet`)와 로그인 계정은 입출고 통계와 같다. 2026-10-12 적용 (`supabase/migrations/021_inv_stats.sql`).
 
+## 한눈에: 대시보드에 나타낼 수 있는 자료 (2026-10-12 기준)
+
+| 보여 줄 것 | 어디서 | 계산 |
+|---|---|---|
+| 작업자별·일별 **스캔 수** (일반 조회 / 재고조사 중 따로) | `inv_stat_daily` metric=`scan` | kind 별 n 합계. via 로 스캐너·카메라·직접입력 비율, result 로 부품·위치·미등록 바코드 비율 |
+| 작업자별·일별 **재고조사 확인 건수** (일일 / 일일장기 / 주간) | `inv_stat_daily` metric=`audit_check` | kind 별 n 합계. result 로 일치·수량 다름 |
+| **수량 다름 비율** (재고 정확도) | 위와 같음 | diff / (ok + diff) |
+| **스캔 탭 재고 일치** 건수 (재고조사 아닐 때의 수시 확인) | `inv_stat_daily` metric=`spot_check` | n 합계 (v55부터) |
+| **하루 작업 건수** (사람별 합계) | `inv_stat_daily` | audit_check + spot_check (+ 원하면 loc_change done, check) |
+| **위치 변경** 건수·실패 건수 | `inv_stat_daily` metric=`loc_change` | result 별 n |
+| **RDC 재고 조회** 건수 | `inv_stat_daily` metric=`rdc` | n 합계 |
+| **수량 다름 체크** 건수 (남아 있음 / 지움) | `inv_stat_daily` metric=`check` | result=open 은 아직 처리 안 한 건 |
+| 재고조사 **작업시간**, **시간당 처리 건수** | `inv_stat_active` | active_sec, checks / (active_sec/3600) |
+| 첫 확인·마지막 확인 시각 | `inv_stat_active` | first_at, last_at |
+| 조사별 **완료율**·미확인 건수 | `inv_stat_audits` | (ok+diff)/total, unchecked |
+| **일일 재고조사 누적 일수**, 일일장기 진행 일수 | `inv_stat_audits` | kind 별 ok+diff>0 인 조사 수 |
+| 조사별 참여 인원, 예외 확인 건수, 재고 0 제외 건수 | `inv_stat_audits` | workers, exempt, removed_zero |
+| 조사 시작·종료 시각과 담당자 | `inv_stat_audits` | started_at/by, finished_at/by |
+
+나타낼 수 **없는** 것: 부품번호·위치별 통계(서버 통계에 부품번호를 올리지 않음), 스캔 탭 조회에 쓴 시간, 2026-10-12 이전의 스캔 수.
+
+지금 쌓인 양(해운대, 2026-10-12): 스캔 수는 10/12 하루치(조회 16, 조사 중 1), 스캔 탭 재고 일치 8건(시험 포함),
+재고조사 6회(일일 2 · 일일장기 2 · 주간 2, 확인 39건 중 수량 다름 7), 위치 변경 6건(완료 4 · 실패 2), RDC 조회 35건, 수량 다름 체크 7건.
+→ 자료가 아직 적으니 화면은 **빈 값·0건일 때도 자연스럽게** 보이게 만들 것.
+
 ## 결정 사항
 - 공개 범위: 입출고 통계와 같이 **사용 중인 모든 로그인 계정이 전 지점·이름까지** 본다.
 - 스캔 수는 **일반 조회(스캔 탭)** 와 **재고조사 중** 을 따로 센다.
