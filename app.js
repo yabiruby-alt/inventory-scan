@@ -347,6 +347,8 @@
   function resolve(raw, fromScanner, fromCamera) {
     var code = normCode(raw);
     if (!code) return;
+    // 앞자리 0이 빠진 라벨(엑셀에서 숫자로 바뀐 부품번호 등): 10자리 숫자가 목록에 없고 0을 붙인 11자리가 있으면 그 부품
+    if (/^\d{10}$/.test(code) && !state.parts[code] && (state.parts["0" + code] || state.rrParts["0" + code])) code = "0" + code;
     if (fromScanner && !fromCamera) {
       var t = Date.now();
       if (code === lastScan.code && t - lastScan.at < SCAN_COOLDOWN_MS) return;
