@@ -356,7 +356,7 @@
 
     var via = fromCamera ? "camera" : fromScanner ? "scanner" : null;   // 손으로 친 것(null)은 현장 확인으로 안 침
     // 재고 확인 창이 잠겨 있으면: 그 위치·부품을 찍으면 열림
-    if (via && !$("sheet").hidden && $("aLock")) { auditSheetScan(code, via); return; }
+    if (via && !$("sheet").hidden && $("aLock")) { countScan("audit", looksLoc(code) ? "loc" : "part", via); auditSheetScan(code, via); return; }
     // 위치 변경 창이 열려 있으면 스캔한 위치를 새 위치 칸에 넣음
     if (!$("sheet").hidden) {
       if ($("newLoc") && looksLoc(code)) { $("newLoc").value = code; $("newLoc").dispatchEvent(new Event("input", { bubbles: true })); beep(); }
@@ -365,7 +365,11 @@
     if ($("manualInput")) $("manualInput").value = "";
 
     if ($("reportView")) return;   // 보고서 미리보기 중
-    if (state.tab === "audit" && state.auditOpen && currentAudit()) { auditScan(code, via); return; }
+    if (state.tab === "audit" && state.auditOpen && currentAudit()) {
+      countScan("audit", findAuditItem(code) ? "part" : state.auditItems.some(function (x) { return x.lct_cd === code; }) ? "loc" : "unknown", via);
+      auditScan(code, via); return;
+    }
+    countScan("lookup", isLoc(code) ? "loc" : state.parts[code] ? "part" : "unknown", via);
     if (via) sound(isLoc(code) || state.parts[code] || (/^[A-Z0-9]{5,20}$/.test(code) && !looksLoc(code)) ? "ok" : "err");
 
     var type = isLoc(code) ? "loc" : state.parts[code] ? "part" : null;
@@ -380,6 +384,46 @@
     state.result = [{ type: type, code: code }];
     render(true);
   }
+  // ---------- 통계: 스캔 수 (통계 대시보드 "재고 관리" 메뉴용) ----------
+  // 스캔할 때마다 휴대폰에서 하루 단위로 세어 두고(일반 조회 / 재고조사 중, 부품·위치, 스캐너·카메라·직접 입력),
+  // 1분마다 그날의 누적 건수만 서버에 보냄 (inv_stat_push). 부품번호·위치는 보내지 않음. 같은 값을 다시 보내도 중복 집계 없음
+  var statCounts = store.get("statCounts", {}), statDirty = false, statSending = false;
+  function kstDate(t) { return new Date((t || Date.now()) + 9 * 3600000).toISOString().slice(0, 10); }
+  function statDevice() {
+    var id = store.get("deviceId", null);
+    if (!id) { id = "ph-" + Math.random().toString(36).slice(2, 10) + Date.now().toString(36); store.set("deviceId", id); }
+    return id;
+  }
+  function countScan(ctx, target, via) {
+    if (!state.user) return;
+    var k = [kstDate(), state.user.id, ctx, target, via || "manual"].join("|");
+    statCounts[k] = (statCounts[k] || 0) + 1;
+    statDirty = true;
+    store.set("statCounts", statCounts);
+  }
+  async function pushStats() {
+    if (statSending || !statDirty || !state.user || state.authWait || !navigator.onLine) return;
+    var uid = state.user.id, rows = [];
+    Object.keys(statCounts).forEach(function (k) {
+      var x = k.split("|");
+      if (x[1] === uid) rows.push({ d: x[0], metric: "scan", ctx: x[2], target: x[3], via: x[4], n: statCounts[k] });
+    });
+    if (!rows.length) { statDirty = false; return; }
+    statSending = true; statDirty = false;
+    try {
+      var r = await sb.rpc("inv_stat_push", { p_device: statDevice(), p_rows: rows });
+      if (r.error) statDirty = true;
+      else {   // 보낸 것 중 지난 날짜는 지움 (오늘 것은 계속 누적해서 다시 보냄)
+        var today = kstDate();
+        Object.keys(statCounts).forEach(function (k) { var x = k.split("|"); if (x[1] === uid && x[0] < today) delete statCounts[k]; });
+        store.set("statCounts", statCounts);
+      }
+    } catch (e) { statDirty = true; }
+    statSending = false;
+  }
+  setInterval(pushStats, 60000);
+  document.addEventListener("visibilitychange", function () { if (document.visibilityState === "hidden") pushStats(); });
+
   function pushRecent(code) {
     state.recent = [{ code: code, time: hhmm() }].concat(state.recent.filter(function (r) { return r.code !== code; })).slice(0, 50);
     store.set("recent", state.recent);
@@ -2434,6 +2478,7 @@
     state.loading = false; state.cached = false;
     render(!booted);
     flushOutbox();
+    statDirty = true; pushStats();   // 지난번에 못 보낸 스캔 수
     if (r.data.must_change_password) toast("비밀번호 변경이 필요합니다. 태블릿 앱에서 변경해 주세요.");
   }
 
