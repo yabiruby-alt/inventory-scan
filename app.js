@@ -1995,7 +1995,7 @@
     if (a && $("sheet").contains(a)) a.blur();
     $("sheet").hidden = true; $("backdrop").hidden = true;
     sheetExempt = {};
-    if (exitOpen) { exitOpen = false; fillBack(); }
+    if (exitOpen) { exitOpen = false; armBack(); }
   }
   $("backdrop").addEventListener("click", closeSheet);
 
@@ -2029,9 +2029,44 @@
     if (ua && !ua.isActive) return;   // 스크립트가 누른 클릭 등은 제외 (건너뛰는 기록이 됨)
     try { for (var d = backDepth(); d < BACK_DEPTH; d++) history.pushState({ dsBack: d + 1 }, ""); } catch (e) { /* 무시 */ }
   }
-  document.addEventListener("click", fillBack, true);
-  document.addEventListener("keydown", fillBack, true);
+  // 새 방식(크롬 126+ 등 CloseWatcher 가 있는 브라우저): 방문 기록을 쌓지 않고 뒤로가기 버튼을 직접 받음
+  //   → 기록이 한 칸으로 유지돼서 '종료' 버튼으로 창을 바로 닫을 수 있음 (기록이 여러 칸이면 브라우저가 닫기를 막음)
+  //   뒤로가기 한 번 = 감시기 하나가 닫힘. 닫을 것을 닫은 뒤 새 감시기를 걸어 둠. 종료 확인 중에는 걸지 않아 뒤로가기가 그대로 앱 종료
+  var USE_CW = typeof window.CloseWatcher === "function", backCW = null;
+  function armCW() {
+    if (backCW || exitOpen || exiting) return;
+    try {
+      var w = new window.CloseWatcher();
+      w.onclose = function () { if (backCW === w) backCW = null; onBackCW(); };
+      backCW = w;
+    } catch (e) { /* 못 걸면 뒤로가기는 브라우저 기본 동작 */ }
+  }
+  function dropCW() { if (backCW) { var w = backCW; backCW = null; try { w.destroy(); } catch (e) { /* 무시 */ } } }
+  function backClose() {   // 닫을 것이 있으면 닫고 true
+    if ($("reportView")) closeReport();
+    else if (!$("sheet").hidden) closeSheet();
+    else if ($("rBack") || $("movesBack") || $("auditBack")) ($("rBack") || $("movesBack") || $("auditBack")).click();
+    else if (state.tab === "scan" && state.result.length) { state.result = []; render(true); }
+    else return false;
+    return true;
+  }
+  function onBackCW() {
+    if (exitOpen) return;
+    if (backClose()) { armCW(); return; }
+    openExit();   // 감시기를 다시 걸지 않음 → 다음 뒤로가기는 앱 종료
+  }
+  var exiting = false;
+  function armBack() { if (USE_CW) armCW(); else fillBack(); }
+  if (USE_CW) {
+    armCW();   // 화면을 누르기 전의 첫 뒤로가기도 받게
+    document.addEventListener("click", armCW, true);
+    document.addEventListener("keydown", armCW, true);
+  } else {
+    document.addEventListener("click", fillBack, true);
+    document.addEventListener("keydown", fillBack, true);
+  }
   window.addEventListener("popstate", function () {
+    if (USE_CW) return;
     var d = backDepth();
     if (exitUnwind) { if (d === 0) { exitUnwind = false; openExit(); } return; }
     if (exitOpen) return;
@@ -2059,10 +2094,13 @@
     exitOpen = true;   // 지금은 기록 맨 앞 — 다음 뒤로가기는 그대로 앱 종료
   }
   function exitApp() {
+    exiting = true;        // 닫는 동안 뒤로가기 감시기를 다시 걸지 않음
     exitOpen = false;
     closeSheet();
-    history.back();
+    dropCW();
+    if (!USE_CW) history.back();
     try { window.close(); } catch (e) { /* 무시 */ }
+    setTimeout(function () { exiting = false; if (!document.hidden) armBack(); }, 3500);
     // 홈 화면 앱은 스크립트로 닫을 수 없는 경우가 있음
     setTimeout(function () {
       if (document.hidden) return;
