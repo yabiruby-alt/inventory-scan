@@ -270,6 +270,7 @@
     }
     flushOutbox();
     if (state.tab === "moves") await loadMoveLog();
+    saveSnap();
     render(false);
   }
 
@@ -2351,31 +2352,90 @@
     await afterLogin(r.data.user);
   }
 
+  // ---------- 휴대폰에 저장해 둔 재고로 바로 시작 ----------
+  // 앱을 열 때마다 현재고 전체를 받느라 기다리지 않게: 마지막으로 받은 재고·조사 목록을 휴대폰(IndexedDB)에 두고,
+  // 열자마자 그것으로 화면을 띄운 뒤 뒤에서 바뀐 것만 받아 갱신. 로그아웃하면 지움
+  var SNAP_VER = 1, snapTimer = null;
+  function idb(mode, fn) {
+    return new Promise(function (resolve) {
+      try {
+        var open = indexedDB.open("ds-inv", 1);
+        open.onupgradeneeded = function () { open.result.createObjectStore("kv"); };
+        open.onerror = function () { resolve(null); };
+        open.onsuccess = function () {
+          try {
+            var tx = open.result.transaction("kv", mode), rq = fn(tx.objectStore("kv"));
+            tx.oncomplete = function () { resolve(rq ? rq.result : null); open.result.close(); };
+            tx.onerror = tx.onabort = function () { resolve(null); open.result.close(); };
+          } catch (e) { resolve(null); }
+        };
+      } catch (e) { resolve(null); }
+    });
+  }
+  function saveSnap() {
+    clearTimeout(snapTimer);
+    snapTimer = setTimeout(function () {
+      if (!state.user || state.loading || state.cached) return;
+      var snap = { v: SNAP_VER, user: state.user, savedAt: Date.now(), partsSyncAt: partsSyncAt, partsFullAt: partsFullAt,
+        parts: Object.keys(state.parts).map(function (k) { return state.parts[k]; }),
+        rr: Object.keys(state.rrParts).map(function (k) { return state.rrParts[k]; }),
+        status: state.status, sources: state.sources, audits: state.audits, checks: state.checks };
+      idb("readwrite", function (st) { return st.put(snap, "snap:" + state.user.id); });
+    }, 1500);
+  }
+  function applySnap(snap) {
+    var parts = {}, locs = {}, rr = {};
+    snap.parts.forEach(function (x) { parts[x.item_cd] = x; if (x.lct_cd) (locs[x.lct_cd] = locs[x.lct_cd] || []).push(x.item_cd); });
+    (snap.rr || []).forEach(function (x) { rr[x.item_cd] = x; });
+    state.parts = parts; state.locs = locs; state.rrParts = rr;
+    state.status = snap.status || null; state.sources = snap.sources || {}; state.audits = snap.audits || {}; state.checks = snap.checks || [];
+    partsSyncAt = snap.partsSyncAt || null; partsFullAt = snap.partsFullAt || 0;
+  }
+  function dropSnap(uid) { return idb("readwrite", function (st) { return st.delete("snap:" + uid); }); }
+
   async function afterLogin(user) {
+    // 저장해 둔 것이 있으면 그것으로 먼저 화면을 띄움 (계정 확인·최신 재고는 뒤에서)
+    var booted = false, snap = await idb("readonly", function (st) { return st.get("snap:" + user.id); });
+    if (snap && snap.v === SNAP_VER && snap.user && snap.user.active && snap.parts && snap.parts.length) {
+      applySnap(snap);
+      state.user = snap.user; state.loading = false; state.cached = true;
+      render(true);
+      booted = true;
+    }
     var r = await sb.from("profiles").select("id,login_id,name,role,branch,active,must_change_password").eq("id", user.id).maybeSingle();
+    if (r.error && booted) {   // 인터넷이 안 됨: 저장해 둔 재고로 계속 (다음 확인 주기에 다시 시도)
+      state.cached = false;
+      toast("인터넷이 약해 저장해 둔 " + basis() + " 기준 재고를 보여 줍니다");
+      return;
+    }
     if (r.error || !r.data || !r.data.active) {
+      dropSnap(user.id);
+      state.parts = {}; state.locs = {}; state.rrParts = {}; state.checks = [];
       await sb.auth.signOut();
       state.user = null; render(true);
       if ($("loginError")) $("loginError").textContent = "사용할 수 없는 계정입니다. 관리자에게 문의하세요.";
       return;
     }
     state.user = r.data;
-    state.loading = true; render(true);
+    if (!booted) { state.loading = true; render(true); }
     try {
-      await Promise.all([loadStatus(), loadParts(), loadChecks(), loadAudits(), loadRrParts().catch(function () {})]);
+      // 저장해 둔 재고로 시작했으면 바뀐 것만 받음
+      await Promise.all([loadStatus(), booted ? updateParts() : loadParts(), loadChecks(), loadAudits(), loadRrParts().catch(function () {})]);
       lastPartsAt = state.status && state.status.parts_at;
       lastRrAt = state.status && state.status.rr_parts_at;
+      saveSnap();
     } catch (e) {
-      toast("데이터를 불러오지 못했습니다: " + e.message);
+      toast(booted ? "최신 재고를 받지 못했습니다. 저장해 둔 " + basis() + " 기준 재고를 보여 줍니다" : "데이터를 불러오지 못했습니다: " + e.message);
     }
-    state.loading = false;
-    render(true);
+    state.loading = false; state.cached = false;
+    render(!booted);
     flushOutbox();
     if (r.data.must_change_password) toast("비밀번호 변경이 필요합니다. 태블릿 앱에서 변경해 주세요.");
   }
 
   async function logout() {
     stopCamera();
+    if (state.user) dropSnap(state.user.id);
     await sb.auth.signOut();
     dropReqChannel();
     state.user = null; state.result = []; state.tab = "scan"; state.parts = {}; state.locs = {}; state.checks = []; state.moveLog = null; state.rrParts = {}; state.rdc = {};
@@ -2398,6 +2458,11 @@
 
   // ---------- 시작 ----------
   checkUpdate();
+  // 앱 화면 파일을 휴대폰에 저장 (전파가 약해도 바로 뜨게). 새 버전 확인은 그대로 인터넷에서
+  if ("serviceWorker" in navigator && location.protocol === "https:") {
+    navigator.serviceWorker.register("sw.js").catch(function () { /* 없어도 동작 */ });
+  }
+
   (async function boot() {
     var s = await sb.auth.getSession();
     if (s.data && s.data.session) await afterLogin(s.data.session.user);
