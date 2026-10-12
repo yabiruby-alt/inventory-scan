@@ -225,9 +225,70 @@ def _upload_parts(table: str, sent_attr: str, branch: str, pw_rows: list, now: s
     return rows, changed
 
 
-def _aging_candidates(pw_rows: list, today: str) -> list:
-    """부품창고 현재고 중 최종입고일·최종출고일이 모두 AGING_DAYS 일보다 오래된 부품 (출고 이력 없음 포함, Z 제외).
-    최근에 재고조사로 확인한 부품 제외·무작위 뽑기·한 바퀴 돌기는 DB 함수 inv_build_aging 이 함"""
+# ---- 일일장기: 창고에서 실제로 나간 날 (DMS "출고/인보이스 리포트"의 출고내역) ----
+# 현재고리스트의 최종출고일(lastSaleDt)은 RO 출고가 반영 안 되는 부품이 있어 쓰지 않음 (2026-10-12 확인: 11427854445).
+# 부품별 마지막 출고일만 이 PC에 둠(daemon/aging_dlv.json). 처음엔 180일치를 한 달씩 나눠 받고(합쳐 약 2분), 그 뒤로는 하루 한 번 새 날짜만.
+DLV_FILE = HERE / "aging_dlv.json"
+DLV_CHUNK_DAYS = 30
+
+
+def _dlv_is_out(name: str) -> bool:
+    """수불유형 이름으로 '나간 것'만: RO출고·판매출고·지점간재고이동·고정자산출고·기타출고 등. 반품·입고·취소는 제외"""
+    name = name or ""
+    if any(w in name for w in ("취소", "입고", "반품")):
+        return False
+    return "출고" in name or "이동" in name
+
+
+def _dlv_sync(page, today: str) -> dict:
+    """부품별 마지막 출고일 {item_cd: 'YYYY-MM-DD'} 를 오늘까지 맞춰 돌려줌"""
+    import __main__ as pb
+    from datetime import date, timedelta
+    c = _cfg()
+    t0 = date.fromisoformat(today)
+    keep_from = (t0 - timedelta(days=AGING_DAYS + 20)).isoformat()
+    cache = {}
+    if DLV_FILE.exists():
+        try:
+            cache = json.loads(DLV_FILE.read_text(encoding="utf-8"))
+        except Exception:
+            cache = {}
+    if cache.get("branch") != c["branch"] or not cache.get("fetched_to") or cache["fetched_to"] < keep_from:
+        cache = {"branch": c["branch"], "fetched_to": None, "last": {}}
+    if cache.get("fetched_to") == today:
+        return cache["last"]
+    start = date.fromisoformat(cache["fetched_to"]) if cache.get("fetched_to") else t0 - timedelta(days=AGING_DAYS + 1)
+    frame = pb.open_screen(page, "icon-report", "출고/인보이스 리포트", "selectPartsDlvInvRpt")
+    last, n_rows, t_start = cache["last"], 0, time.time()
+    d = start
+    while d <= t0:
+        e = min(d + timedelta(days=DLV_CHUNK_DAYS - 1), t0)
+        r = frame.evaluate(pb.FETCH_JS, {"url": "/rpt/raw/selectPartsDlvInvRpt.do", "body": {
+            "recordCountPerPage": 200000, "pageIndex": 1, "firstIndex": 0, "lastIndex": 200000,
+            "sProdType": "", "sSysProcDtFrom": d.strftime("%Y%m%d"), "sSysProcDtTo": e.strftime("%Y%m%d"), "sRptType": "dlv"}})
+        if not r.get("ok"):
+            raise RuntimeError(f"출고내역 조회 실패 {d}~{e}: {str(r)[:200]}")
+        for x in r.get("rows") or []:
+            cd, day = x.get("itemCd"), (x.get("regDt") or "")[:10]
+            if not cd or not day or not _dlv_is_out(x.get("rapTpNm")):
+                continue
+            if x.get("brchCd") and str(x["brchCd"]) != str(c["brch_cd"]):
+                continue
+            if _num(x.get("qty")) <= 0:
+                continue
+            if day > last.get(cd, ""):
+                last[cd] = day
+        n_rows += len(r.get("rows") or [])
+        d = e + timedelta(days=1)
+    last = {k: v for k, v in last.items() if v >= keep_from}   # 오래된 것은 버림
+    DLV_FILE.write_text(json.dumps({"branch": c["branch"], "fetched_to": today, "last": last}, ensure_ascii=False), encoding="utf-8")
+    _log(f"출고내역 갱신: {start} ~ {today}, {n_rows}줄, 출고 이력 부품 {len(last)}종 ({time.time() - t_start:.0f}초)")
+    return last
+
+
+def _aging_candidates(pw_rows: list, today: str, dlv_last: dict) -> list:
+    """부품창고 현재고 중 최종입고일이 AGING_DAYS 일보다 오래됐고, 그 기간 동안 창고에서 나간 적이 없는 부품 (Z 제외).
+    최근에 재고조사로 확인한 부품 제외·무작위 뽑기·한 바퀴 돌기·이월은 DB 함수 inv_build_aging 이 함"""
     from datetime import date, timedelta
     cutoff = (date.fromisoformat(today) - timedelta(days=AGING_DAYS)).isoformat()
     out = []
@@ -236,7 +297,7 @@ def _aging_candidates(pw_rows: list, today: str) -> list:
         if not cd or cd.startswith("Z") or _num(r.get("crtQty")) <= 0:
             continue
         purc = (r.get("lastPurcDt") or "")[:10]
-        sale = (r.get("lastSaleDt") or "")[:10]
+        sale = dlv_last.get(cd) or ""   # 창고에서 실제로 나간 마지막 날 (출고내역)
         if (purc and purc >= cutoff) or (sale and sale >= cutoff):
             continue
         out.append({"item_cd": cd, "item_nm": r.get("itemNm"), "lct_cd": (r.get("lctCd") or "").strip(),
@@ -274,9 +335,18 @@ def on_cycle(page, ctx: dict) -> None:
 
     # 2-1) 일일장기 재고조사: 그날 처음 한 번만 10개를 뽑아 하루 고정 (실패해도 다른 업로드엔 영향 없음)
     today = ctx.get("today") or datetime.now().strftime("%Y-%m-%d")
+    dlv_last = None
+    if getattr(_S, "dlv_day", None) != today:   # 출고내역: 하루 한 번 (처음엔 180일치 약 2분, 그 뒤로는 새 날짜만)
+        try:
+            dlv_last = _dlv_sync(page, today)
+            _S.dlv_day = today
+        except Exception as e:
+            _log(f"출고내역 갱신 실패 (다음 주기에 재시도): {str(e)[:200]}")
     if _S.aging_day != today:
         try:
-            cands = _aging_candidates(ctx["pw_rows"], today)
+            if dlv_last is None:
+                dlv_last = _dlv_sync(page, today)   # 오늘 것이 이미 있으면 파일에서 바로 읽음. 못 받으면 목록을 만들지 않고 다음 주기에
+            cands = _aging_candidates(ctx["pw_rows"], today, dlv_last)
             n = _rest("POST", "rpc/inv_build_aging", {"p_day": today, "p_candidates": cands,
                                                       "p_count": AGING_COUNT, "p_days": AGING_DAYS}, prefer="")
             _S.aging_day = today

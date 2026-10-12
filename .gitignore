@@ -9,3 +9,5 @@ daemon/*.log
 daemon/LOC_CHANGE_HALT.txt
 tests/vendor/
 node_modules/
+daemon/probe_job*.py
+daemon/aging_dlv.json
