@@ -460,3 +460,10 @@ button.row:active, .row-btn:active { background: var(--fill); }
 .netpill.off i { background: #FF3B30; }
 /* 긴 재고조사 목록: 화면 밖 위치 묶음은 그리기를 미룸 (높이는 app.js 가 줄 수로 넣음) */
 .group.cv { content-visibility: auto; }
+
+/* 스캔 탭 재고 일치 (자주 쓰는 버튼) */
+.btn-spot { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; width: 100%; min-height: 58px; padding: 8px 12px; margin-top: 12px; border-radius: 14px; background: #1F7A36; color: #fff; font-size: var(--fs-lg); font-weight: 700; text-align: center; }
+.btn-spot small { font-size: 12px; font-weight: 500; opacity: .85; }
+.btn-spot:active { opacity: .8; }
+.btn-spot:disabled { opacity: .5; }
+.btn-spot.off { background: var(--fill); color: var(--label2); font-weight: 600; }

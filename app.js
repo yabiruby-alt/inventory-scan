@@ -1081,6 +1081,8 @@
         '<div class="tile rdc" id="rrTile" data-pn="' + esc(pn) + '">' + rrTile(pn) + '</div>' +
         '<div class="tile rdc" id="rdcTile" data-pn="' + esc(pn) + '">' + rdcTile(pn) + '</div>' +
       '</div>' +
+      (spotVia(pn) ? '<button class="btn-spot" data-spot="' + esc(pn) + '">재고 일치<small>실물 수량이 ' + qtyNum(Number(p.crt_qty) + rrQty(pn)) + ' EA 와 같으면 누르세요</small></button>'
+        : '<div class="btn-spot off">재고 일치<small>바코드를 스캔하면 누를 수 있습니다</small></div>') +
       moveBanner(pn) +
       (c ? '<div class="banner">수량 다름 체크됨 · DMS ' + qtyNum(c.dms_qty) + (Number(c.rr_qty) ? ' + RR ' + qtyNum(c.rr_qty) : '') + ' / 실사 ' + qtyNum(c.counted_qty) + (c.memo ? ' · ' + esc(c.memo) : '') + '</div>' : '') +
       '<div class="section-label">부품 정보</div>' +
@@ -1094,8 +1096,6 @@
       '<div class="group">' +
         (moving ? '<div class="row"><div class="row-main" style="color:var(--label2)">위치 변경 · DMS 반영 중</div></div>'
           : '<button class="row" data-move="' + esc(pn) + '"><div class="row-main row-link">위치 변경</div>' + CHEV + '</button>') +
-        (spotVia(pn) ? '<button class="row" data-spot="' + esc(pn) + '"><div class="row-main row-link">재고 일치</div>' + CHEV + '</button>'
-          : '<div class="row"><div class="row-main" style="color:var(--label2)">재고 일치 · 바코드를 스캔하면 누를 수 있습니다</div></div>') +
         '<button class="row" data-check="' + esc(pn) + '"><div class="row-main row-link">' + (c ? "체크 내용 수정" : "수량 다름 체크") + '</div>' + CHEV + '</button>' +
         '<button class="row" data-refresh="' + esc(pn) + '"><div class="row-main row-link">DMS 현재고 다시 조회</div>' + CHEV + '</button>' +
         '<button class="row" data-movelog="' + esc(pn) + '"><div class="row-main row-link">이 부품 위치 변경 이력</div>' + CHEV + '</button>' +
