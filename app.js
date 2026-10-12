@@ -78,10 +78,10 @@
   // 데몬에 요청을 보낼 수 없는 상태: 응답이 끊겼거나, 프로그램은 살아 있어도 DMS 창이 닫힘·로그인 풀림(dms_error)
   function daemonStale() {
     if (!state.status || !state.status.daemon_seen_at) return true;
-    if (state.status.dms_error) return true;
+    if (state.status.dms_error || state.authWait) return true;
     return Date.now() - new Date(state.status.daemon_seen_at).getTime() > DAEMON_STALE_MS;
   }
-  function daemonWhy() { return (state.status && state.status.dms_error) || "DMS 연결 PC가 응답하지 않습니다"; }
+  function daemonWhy() { return state.authWait ? "인터넷 연결이 없습니다" : (state.status && state.status.dms_error) || "DMS 연결 PC가 응답하지 않습니다"; }
   // 데몬은 살아 있는데 재고가 오래 안 올라옴 (갱신이 계속 실패하는 경우)
   var PARTS_STALE_MS = 25 * 60000;
   function partsStaleMin() {
@@ -1444,7 +1444,7 @@
     });
   }
   async function flushOutbox() {
-    if (flushing || !state.user || !navigator.onLine) return;
+    if (flushing || !state.user || !navigator.onLine || state.authWait) return;
     var mine = outbox.filter(function (j) { return j.userId === state.user.id; });
     if (!mine.length) return;
     flushing = true;
@@ -1861,7 +1861,7 @@
   // ---------- 연결 상태 (상단 왼쪽 작은 표시) ----------
   // 정상: 초록 점만 / 전송 대기: 주황 "대기 n" / DMS 연결 PC 응답 없음: 주황 "DMS" / 인터넷 끊김: 빨강 "오프라인"
   function netState() {
-    if (!navigator.onLine) return { c: "off", t: "오프라인", msg: "인터넷이 끊겼습니다. 재고조사 확인은 휴대폰에 두었다가 연결되면 자동으로 보냅니다" };
+    if (!navigator.onLine || state.authWait) return { c: "off", t: "오프라인", msg: "인터넷이 끊겼습니다. 재고조사 확인은 휴대폰에 두었다가 연결되면 자동으로 보냅니다" };
     var n = state.user ? (outbox || []).filter(function (j) { return j.userId === state.user.id; }).length : 0;
     if (n) return { c: "wait", t: "대기 " + n, msg: "아직 보내지 못한 확인 " + n + "건 — 연결되면 자동으로 보냅니다" };
     if (state.status && daemonStale()) return { c: "dms", t: "DMS", msg: daemonWhy() + ". 재고는 " + basis() + " 기준이고 RDC 조회·위치 변경은 할 수 없습니다" };
@@ -2420,6 +2420,7 @@
       return;
     }
     state.user = r.data;
+    store.set("lastUser", r.data.id);
     if (!booted) { state.loading = true; render(true); }
     try {
       // 저장해 둔 재고로 시작했으면 바뀐 것만 받음
@@ -2439,6 +2440,7 @@
   async function logout() {
     stopCamera();
     if (state.user) dropSnap(state.user.id);
+    store.set("lastUser", null); state.authWait = false;
     await sb.auth.signOut();
     dropReqChannel();
     state.user = null; state.result = []; state.tab = "scan"; state.parts = {}; state.locs = {}; state.checks = []; state.moveLog = null; state.rrParts = {}; state.rdc = {};
@@ -2466,10 +2468,34 @@
     navigator.serviceWorker.register("sw.js").catch(function () { /* 없어도 동작 */ });
   }
 
+  // 전파가 없는 곳에서 로그인 유효 시간이 지나 앱을 열었을 때: 로그인 화면 대신 저장해 둔 재고로 조회만 되게 열고,
+  // 인터넷이 돌아오면 자동으로 다시 로그인 확인 (직접 로그아웃한 경우는 저장해 둔 것이 없어 해당 없음)
+  async function bootOffline(s) {
+    var uid = store.get("lastUser", null);
+    if (!uid || (navigator.onLine && !s.error)) return false;
+    var snap = await idb("readonly", function (st) { return st.get("snap:" + uid); });
+    if (!snap || snap.v !== SNAP_VER || !snap.user || !snap.parts || !snap.parts.length) return false;
+    applySnap(snap);
+    state.user = snap.user; state.loading = false; state.authWait = true;
+    render(true);
+    toast("인터넷 연결이 없어 저장해 둔 " + basis() + " 기준 재고로 조회만 됩니다");
+    return true;
+  }
+  function retryAuth() {
+    if (!state.authWait) return;
+    sb.auth.getSession().then(function (r) {
+      if (!state.authWait) return;
+      if (r.data && r.data.session) { state.authWait = false; afterLogin(r.data.session.user); }
+      else if (navigator.onLine && !r.error) { state.authWait = false; state.user = null; state.parts = {}; state.locs = {}; state.rrParts = {}; state.checks = []; render(true); }   // 로그인이 정말 끝남
+    }).catch(function () { /* 다음에 다시 */ });
+  }
+  window.addEventListener("online", retryAuth);
+  setInterval(retryAuth, 30000);
+
   (async function boot() {
     var s = await sb.auth.getSession();
     if (s.data && s.data.session) await afterLogin(s.data.session.user);
-    else render(true);
-    setInterval(function () { if (state.user && !state.loading) refreshStatus(); }, STATUS_POLL_MS);
+    else if (!(await bootOffline(s))) render(true);
+    setInterval(function () { if (state.user && !state.loading && !state.authWait) refreshStatus(); }, STATUS_POLL_MS);
   })();
 })();
