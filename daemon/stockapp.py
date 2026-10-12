@@ -282,15 +282,15 @@ def on_cycle(page, ctx: dict) -> None:
         except Exception as e:
             _log(f"일일장기 목록 실패 (다음 주기에 재시도): {str(e)[:200]}")
 
-    # 2-2) 오래된 조회 요청 기록 정리: 하루 한 번 (RDC·현재고 조회 30일 지난 것. 위치 변경 이력은 남김)
+    # 2-2) 용량 정리: 하루 한 번 (90일 지난 재고조사 상세 → 통계 숫자만, 자동 조회 기록 3일, RDC 결과 내용 7일, 진단 사진 14일)
     if getattr(_S, "cleanup_day", None) != today:
         try:
-            n = _rest("POST", "rpc/inv_cleanup_requests", {"p_days": 30}, prefer="")
+            r = _rest("POST", "rpc/inv_compact", {"p_audit_days": 90}, prefer="") or {}
             _S.cleanup_day = today
-            if n:
-                _log(f"오래된 조회 기록 {n}건 정리")
+            if any(r.get(k) for k in ("audits", "items", "requests", "rdc", "diag")):
+                _log(f"용량 정리: 조사 {r.get('audits', 0)}건(상세 {r.get('items', 0)}줄), 조회 기록 {r.get('requests', 0)}건, RDC 결과 {r.get('rdc', 0)}건, 진단 {r.get('diag', 0)}건")
         except Exception as e:
-            _log(f"조회 기록 정리 실패 (다음 주기에 재시도): {str(e)[:200]}")
+            _log(f"용량 정리 실패 (다음 주기에 재시도): {str(e)[:200]}")
 
     # 3) 상태
     _rest("POST", "inv_status?on_conflict=branch",

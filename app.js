@@ -1012,7 +1012,11 @@
     lastAudits[pn] = { loading: true, rows: cur && cur.rows };
     sb.from("inv_audit_items").select("audit_id,status,counted,qty,rr_qty,checked_at,checked_by_name,memo,inv_audits(kind)")
       .eq("item_cd", pn).not("status", "is", null).order("checked_at", { ascending: false }).limit(3)
-      .then(function (r) {
+      .then(async function (r) {
+        if (!r.error && !(r.data || []).length) {   // 90일 지나 상세를 정리한 조사: 옮겨 둔 마지막 확인
+          var lc = await sb.from("inv_last_check").select("checked_at,status,counted,qty,rr_qty,checked_by_name,kind").eq("item_cd", pn).maybeSingle();
+          if (!lc.error && lc.data) r = { data: [Object.assign({ audit_id: null, memo: null, inv_audits: { kind: lc.data.kind } }, lc.data)] };
+        }
         lastAudits[pn] = { rows: r.error ? (cur && cur.rows) || null : r.data || [], at: r.error ? 0 : Date.now() };
         document.querySelectorAll('[data-last="' + pn + '"]').forEach(function (el) {
           el.innerHTML = lastAuditHtml(pn, el.getAttribute("data-skip") || null, el.classList.contains("lastaudit"), true);
