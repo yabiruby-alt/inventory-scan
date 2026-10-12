@@ -173,6 +173,21 @@ def _list_items(rows: list) -> list:
     return out
 
 
+def _server_rows(table: str, branch: str) -> dict:
+    """서버에 올라가 있는 현재고 (item_cd -> _part_row 와 같은 모양). 데몬을 다시 켰을 때 비교 기준"""
+    out, off, size = {}, 0, 1000
+    while True:
+        page = _rest("GET", f"{table}?branch=eq.{_q(branch)}&select=item_cd,item_nm,lct_cd,crt_qty,alois_cd,last_purc_dt"
+                            f"&order=item_cd&limit={size}&offset={off}", prefer="") or []
+        for r in page:
+            out[r["item_cd"]] = {"branch": branch, "item_cd": r["item_cd"], "item_nm": r.get("item_nm"),
+                                 "lct_cd": r.get("lct_cd"), "crt_qty": _num(r.get("crt_qty")),
+                                 "alois_cd": r.get("alois_cd"), "last_purc_dt": r.get("last_purc_dt")}
+        if len(page) < size:
+            return out
+        off += size
+
+
 def _upload_parts(table: str, sent_attr: str, branch: str, pw_rows: list, now: str):
     """부품창고 현재고: 바뀐 행만 올리고, 없어진 품번은 지움 (Z 코드 제외)"""
     sent = getattr(_S, sent_attr)
@@ -181,14 +196,22 @@ def _upload_parts(table: str, sent_attr: str, branch: str, pw_rows: list, now: s
         cd = r.get("itemCd")
         if cd and not cd.startswith("Z"):
             rows[cd] = _part_row(branch, r)
-    if not sent:   # 데몬 시작 후 처음: 서버에 있는 것과 비교할 기준이 없으니 전부 올림
+    first = not sent
+    if first:   # 데몬 시작 후 처음: 서버에 있는 것을 기준으로 삼아 실제로 바뀐 것만 올림 (못 읽으면 예전처럼 전부)
+        try:
+            sent = _server_rows(table, branch)
+        except Exception as e:
+            _log(f"{table} 서버 값을 못 읽어 전부 올림: {str(e)[:120]}")
+            sent = {}
+    full = first and not sent
+    if full:
         changed = list(rows.values())
     else:
         changed = [v for k, v in rows.items() if sent.get(k) != v]
     for i in range(0, len(changed), 500):
         chunk = [dict(v, updated_at=now) for v in changed[i:i + 500]]
         _rest("POST", f"{table}?on_conflict=branch,item_cd", chunk, "resolution=merge-duplicates,return=minimal")
-    if not sent:
+    if full:
         # 처음: 이번에 올리지 않은 품번(예전 주기의 잔여)은 지움
         _rest("DELETE", f"{table}?branch=eq.{_q(branch)}&updated_at=lt.{_q(now)}")
     else:
