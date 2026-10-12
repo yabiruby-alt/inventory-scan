@@ -567,11 +567,14 @@
   }
 
   var IDLE_HINT = "바코드를 칸에 맞추세요 · 안 읽히면 사진 버튼";
+  var capTimer = null;
   function caption(msg, ok) {
     var cap = document.querySelector(".vf-caption");
+    if (capTimer) { clearTimeout(capTimer); capTimer = null; }
     if (!cap) return;
     cap.textContent = msg || IDLE_HINT;
     cap.classList.toggle("ok", !!ok);
+    if (ok) capTimer = setTimeout(function () { capTimer = null; caption(""); }, 2000);   // '인식: …'이 계속 떠 있으면 멈춘 것처럼 보임
   }
 
   // 같은 값이 연속으로 읽혀야 확정. 목록에 있는 품번·위치는 2번, 없는 값은 3번
@@ -579,6 +582,18 @@
   var votes = { code: "", n: 0, at: 0 };
   var fired = { code: "", at: 0, seen: 0 };
   function knownCode(code) { return isLoc(code) || !!state.parts[code] || (state.auditOpen && !!findAuditItem(code)); }
+
+  // 카메라로 찍은 부품에서 결과(재고 일치·수량 다름·위치 변경)를 고르면 바로 다음 부품을 찍을 수 있게 스캔 대기 화면으로 돌아감.
+  // 방금 그 바코드는 화면에서 1초 이상 벗어나야 다시 읽음(같은 부품이 곧바로 다시 뜨지 않게)
+  function nextScan() {
+    var top = state.result[state.result.length - 1];
+    if (state.mode !== "camera" || state.tab !== "scan" || !top || top.type !== "part") return false;
+    state.result = [];
+    fired.at = 0; votes = { code: "", n: 0, at: 0 }; lastScan = { code: "", at: 0 }; cam.frozenUntil = 0;
+    render(true);
+    caption("");
+    return true;
+  }
 
   var cropCanvas = document.createElement("canvas");
   async function tick(video, eng) {
@@ -1062,7 +1077,7 @@
     if (r.error) { toast("기록하지 못했습니다: " + (r.error.message || "연결을 확인하세요")); return; }
     delete lastAudits[pn];
     if (r.data && r.data.cleared) await loadChecks();
-    render(false);
+    if (!nextScan()) render(false);
     toast("재고 일치로 기록했습니다 · " + qtyNum(Number(p.crt_qty) + rrQty(pn)) + " EA" + (r.data && r.data.cleared ? " · 수량 다름 체크는 지웠습니다" : ""));
   }
 
@@ -2354,13 +2369,13 @@
     else r = await sb.from("inv_checks").insert({ item_cd: pn, item_nm: p.item_nm, lct_cd: p.lct_cd, dms_qty: p.crt_qty, rr_qty: rrQty(pn), counted_qty: v, memo: memo || null, checked_by: state.user.id });
     if (r.error) { toast("저장하지 못했습니다: " + r.error.message); $("saveCheck").disabled = false; return; }
     await loadChecks();
-    closeSheet(); render(false);
+    closeSheet(); if (nextScan()) toast("수량 다름으로 체크했습니다 · " + pn); else render(false);
   }
   async function clearCheck(id) {
     var r = await sb.from("inv_checks").update({ cleared_at: new Date().toISOString(), cleared_by_name: state.user.name }).eq("id", id);
     if (r.error) { toast("지우지 못했습니다: " + r.error.message); return; }
     await loadChecks();
-    closeSheet(); render(false);
+    closeSheet(); if (nextScan()) toast("체크를 지웠습니다"); else render(false);
   }
 
   async function saveMove(pn) {
@@ -2369,7 +2384,7 @@
     try {
       var id = await sendRequest("loc_change", pn, { from: from, to: to });
       state.moves[pn] = { from: from, to: to, status: "pending", reqId: id, at: Date.now() };
-      closeSheet(); render(false);
+      closeSheet(); if (nextScan()) toast("위치 변경을 요청했습니다 · " + pn + " → " + to); else render(false);
       waitRequest(id, function (res) {
         if (res.status === "done") {
           state.moves[pn] = { from: from, to: to, status: "done", time: hhmm(), at: Date.now() };
