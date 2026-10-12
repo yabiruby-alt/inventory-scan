@@ -30,7 +30,9 @@ HERE = Path(__file__).resolve().parent
 CONFIG = HERE / "config.local.json"
 LOC_HALT = HERE / "LOC_CHANGE_HALT.txt"   # 이 파일이 있으면 위치 변경을 멈춤 (이상 감지 시 자동 생성)
 
-POLL_EVERY_SEC = 1        # 앱 요청 확인 주기 (partsbay 대기 루프가 1초마다 부름)
+POLL_EVERY_SEC = 1        # 앱 요청 확인 주기: 쓰는 중 (partsbay 대기 루프가 1초마다 부름)
+POLL_IDLE_SEC = 3         # 한동안 요청이 없을 때의 확인 주기 — 여러 지점이 한 서버를 같이 쓰므로 빈 확인을 줄임
+POLL_ACTIVE_SEC = 180     # 마지막 요청 뒤 이 시간 동안은 '쓰는 중'으로 보고 1초마다 확인
 EXPIRE_EVERY_SEC = 30     # 오래된 요청 정리 주기
 HEARTBEAT_EVERY_SEC = 60
 LOGIN_RETRY_SEC = 120
@@ -394,7 +396,8 @@ def _dms_problem(page):
 
 def poll(page) -> None:
     t = time.time()
-    if t - _S.last_poll < POLL_EVERY_SEC or not CONFIG.exists():
+    gap = POLL_EVERY_SEC if t - getattr(_S, "last_req_at", 0.0) < POLL_ACTIVE_SEC else POLL_IDLE_SEC
+    if t - _S.last_poll < gap or not CONFIG.exists():
         return
     _S.last_poll = t
     try:
@@ -415,6 +418,7 @@ def poll(page) -> None:
         reqs = _rest("GET", f"inv_requests?branch=eq.{_q(branch)}&status=eq.pending&order=requested_at.asc&limit=1"
                             "&select=id,kind,item_cd,params,requested_by_name", prefer="")
         if reqs:
+            _S.last_req_at = t   # 쓰는 중: 이어지는 요청은 1초마다 확인
             _handle(page, branch, reqs[0])
     except Exception as e:
         _log(f"요청 확인 실패: {type(e).__name__}: {e}")
