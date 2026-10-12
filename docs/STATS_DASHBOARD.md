@@ -25,13 +25,15 @@ const { data } = await supabase.rpc("inv_stat_audits", { p_from: "2026-10-01", p
 |---|---|---|---|---|
 | `scan` | 스캔 수 | `lookup` 일반 조회 / `audit` 재고조사 중 | `scanner` 블루투스 스캐너 / `camera` 카메라 / `manual` 직접 입력·검색 | `part` 부품 / `loc` 위치 / `unknown` 목록에 없는 바코드 |
 | `audit_check` | 재고조사 확인(작업 건수) | `daily` 일일 / `aging` 일일장기 / `weekly` 주간 | 현장 확인 방식: `scanner`·`camera`(위치를 찍음) / `part`(부품 바코드를 찍음) / `exempt`(예외, 사유 적음) / `unknown`(기능 생기기 전) | `ok` 일치 / `diff` 수량 다름 |
+| `spot_check` | 스캔 탭 재고 일치 (재고조사가 아닐 때 바코드를 찍고 일치로 기록, 2026-10-12 앱 v55부터) | `scan` | `scanner`·`camera`(위치를 찍고 들어옴) / `part`(부품 바코드를 찍음) | `ok` |
 | `loc_change` | DMS 위치 변경 | `-` | `-` | `done` / `failed` / `cancelled` / `pending` / `running` |
 | `rdc` | RDC 재고 조회 | `-` | `-` | `done` / `failed` / … |
 | `check` | 수량 다름 체크 | `scan` 스캔 탭에서 / `audit` 재고조사에서 | `-` | `open` 남아 있음 / `cleared` 지움 |
 
 - **스캔 수는 2026-10-12 배포(앱 v51)부터** 쌓인다. 그 전 스캔은 없다. 같은 바코드를 3초 안에 다시 찍은 것, Z 코드는 세지 않는다.
 - `audit_check` 날짜는 확인 버튼을 누른 시각(`marked_at`, 없으면 서버 기록 시각) 기준. 확인을 되돌리면 건수에서 빠진다.
-- "하루 작업 건수" = 그날 `audit_check` 합계(+ 원하면 `loc_change` done, `check`).
+- "하루 작업 건수" = 그날 `audit_check` 합계(+ 원하면 `spot_check`, `loc_change` done, `check`).
+- `spot_check` 는 같은 사람이 같은 날 같은 부품을 다시 눌러도 1건. 재고조사 작업시간(`inv_stat_active`)·조사 요약에는 들어가지 않는다.
 
 ## 2) `inv_stat_active(p_from, p_to)` — 재고조사 작업시간
 열: `stat_date, branch, user_key, user_name, checks, active_sec, first_at, last_at`

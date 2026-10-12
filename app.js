@@ -381,7 +381,7 @@
     pushRecent(code);
     state.tab = "scan";
     state.locQ = null;
-    state.result = [{ type: type, code: code }];
+    state.result = [{ type: type, code: code, via: via }];   // via: 바코드를 찍어 들어왔는지 (스캔 탭 '재고 일치'에 씀)
     render(true);
   }
   // ---------- 통계: 스캔 수 (통계 대시보드 "재고 관리" 메뉴용) ----------
@@ -1005,7 +1005,7 @@
   // ---------- 부품별 마지막 재고조사 (참고용) ----------
   // 일일·일일장기·주간 재고조사에서 일치/수량 다름으로 확인한 기록 중 가장 최근 것 (부품마다 한 번 받아 둠)
   var lastAudits = {};   // pn → { rows: [...], at } | { loading: true }
-  var KIND_SHORT = { daily: "일일", aging: "일일장기", weekly: "주간" };
+  var KIND_SHORT = { daily: "일일", aging: "일일장기", weekly: "주간", scan: "스캔" };
   function loadLastAudit(pn) {
     var cur = lastAudits[pn];
     if (cur && (cur.loading || Date.now() - cur.at < 60000)) return;
@@ -1013,9 +1013,12 @@
     sb.from("inv_audit_items").select("audit_id,status,counted,qty,rr_qty,checked_at,checked_by_name,memo,inv_audits(kind)")
       .eq("item_cd", pn).not("status", "is", null).order("checked_at", { ascending: false }).limit(3)
       .then(async function (r) {
-        if (!r.error && !(r.data || []).length) {   // 90일 지나 상세를 정리한 조사: 옮겨 둔 마지막 확인
+        if (!r.error) {   // 스캔 탭 '재고 일치' 기록, 90일 지나 상세를 정리한 조사의 마지막 확인 → 더 최근 것이 앞에 오게 합침
           var lc = await sb.from("inv_last_check").select("checked_at,status,counted,qty,rr_qty,checked_by_name,kind").eq("item_cd", pn).maybeSingle();
-          if (!lc.error && lc.data) r = { data: [Object.assign({ audit_id: null, memo: null, inv_audits: { kind: lc.data.kind } }, lc.data)] };
+          if (!lc.error && lc.data) {
+            r = { data: (r.data || []).concat([Object.assign({ audit_id: null, memo: null, inv_audits: { kind: lc.data.kind } }, lc.data)])
+              .sort(function (a, b) { return String(b.checked_at || "").localeCompare(String(a.checked_at || "")); }) };
+          }
         }
         lastAudits[pn] = { rows: r.error ? (cur && cur.rows) || null : r.data || [], at: r.error ? 0 : Date.now() };
         document.querySelectorAll('[data-last="' + pn + '"]').forEach(function (el) {
@@ -1027,9 +1030,9 @@
   function lastAuditHtml(pn, skipAudit, tile, loaded) {
     if (!loaded) loadLastAudit(pn);
     var c = lastAudits[pn];
-    if (!c || !c.rows) return c && !c.loading && !c.rows ? '' : '<span class="la-dim">재고조사 이력 확인 중…</span>';
-    var x = c.rows.filter(function (r) { return r.audit_id !== skipAudit; })[0];
-    if (!x) return '<span class="la-dim">' + (tile ? '재고조사 이력 없음' : '이전 재고조사 이력 없음') + '</span>';
+    if (!c || !c.rows) return c && !c.loading && !c.rows ? '' : '<span class="la-dim">재고 확인 이력 확인 중…</span>';
+    var x = c.rows.filter(function (r) { return !skipAudit || r.audit_id !== skipAudit; })[0];
+    if (!x) return '<span class="la-dim">' + (tile ? '재고 확인 이력 없음' : '이전 재고 확인 이력 없음') + '</span>';
     var d = new Date(x.checked_at), when = (d.getMonth() + 1) + "/" + d.getDate();
     var kind = KIND_SHORT[x.inv_audits && x.inv_audits.kind] || "";
     var base = Number(x.qty) + (Number(x.rr_qty) || 0);
@@ -1037,8 +1040,30 @@
       : '<b class="la-diff">수량 다름</b> 실사 ' + qtyNum(x.counted) + ' / DMS ' + qtyNum(base);
     var who = x.checked_by_name ? ' · ' + esc(x.checked_by_name) : '';
     return tile
-      ? '<div class="la-head">마지막 재고조사</div><div>' + when + ' ' + kind + who + '</div><div>' + res + '</div>' + (x.memo ? '<div class="la-memo">' + esc(x.memo) + '</div>' : '')
-      : (skipAudit ? '지난 재고조사 ' : '마지막 재고조사 ') + when + ' ' + kind + ' · ' + res + who;
+      ? '<div class="la-head">마지막 재고 확인</div><div>' + when + ' ' + kind + who + '</div><div>' + res + '</div>' + (x.memo ? '<div class="la-memo">' + esc(x.memo) + '</div>' : '')
+      : (skipAudit ? '지난 재고 확인 ' : '마지막 재고 확인 ') + when + ' ' + kind + ' · ' + res + who;
+  }
+
+  // 스캔 탭 '재고 일치': 바코드를 찍어 들어온 화면에서만 (부품을 찍었거나, 위치를 찍고 그 위치의 부품을 고름)
+  function spotVia(pn) {
+    var r0 = state.result[0], p = state.parts[pn];
+    if (!r0 || !r0.via || !p) return null;
+    if (r0.type === "part") return r0.code === pn ? "part" : null;
+    return p.lct_cd === r0.code ? r0.via : null;
+  }
+  async function spotOk(pn, btn) {
+    var via = spotVia(pn), p = state.parts[pn];
+    if (!via || !p) { toast("부품이나 위치 바코드를 스캔한 뒤에 누를 수 있습니다"); return; }
+    if (btn.disabled) return;
+    btn.disabled = true;
+    var r;
+    try { r = await sb.rpc("inv_spot_ok", { p_item: pn, p_via: via }); } catch (e) { r = { error: e }; }
+    btn.disabled = false;
+    if (r.error) { toast("기록하지 못했습니다: " + (r.error.message || "연결을 확인하세요")); return; }
+    delete lastAudits[pn];
+    if (r.data && r.data.cleared) await loadChecks();
+    render(false);
+    toast("재고 일치로 기록했습니다 · " + qtyNum(Number(p.crt_qty) + rrQty(pn)) + " EA" + (r.data && r.data.cleared ? " · 수량 다름 체크는 지웠습니다" : ""));
   }
 
   function viewPart(pn) {
@@ -1069,6 +1094,8 @@
       '<div class="group">' +
         (moving ? '<div class="row"><div class="row-main" style="color:var(--label2)">위치 변경 · DMS 반영 중</div></div>'
           : '<button class="row" data-move="' + esc(pn) + '"><div class="row-main row-link">위치 변경</div>' + CHEV + '</button>') +
+        (spotVia(pn) ? '<button class="row" data-spot="' + esc(pn) + '"><div class="row-main row-link">재고 일치</div>' + CHEV + '</button>'
+          : '<div class="row"><div class="row-main" style="color:var(--label2)">재고 일치 · 바코드를 스캔하면 누를 수 있습니다</div></div>') +
         '<button class="row" data-check="' + esc(pn) + '"><div class="row-main row-link">' + (c ? "체크 내용 수정" : "수량 다름 체크") + '</div>' + CHEV + '</button>' +
         '<button class="row" data-refresh="' + esc(pn) + '"><div class="row-main row-link">DMS 현재고 다시 조회</div>' + CHEV + '</button>' +
         '<button class="row" data-movelog="' + esc(pn) + '"><div class="row-main row-link">이 부품 위치 변경 이력</div>' + CHEV + '</button>' +
@@ -2199,6 +2226,7 @@
       $("locList").innerHTML = locRows(state.result[state.result.length - 1].code, $("locSearch") ? $("locSearch").value : "");
       return;
     }
+    if (el.hasAttribute("data-spot")) { spotOk(el.getAttribute("data-spot"), el); return; }
     if (el.hasAttribute("data-check")) { openCheck(el.getAttribute("data-check")); return; }
     if (el.hasAttribute("data-move")) { openMove(el.getAttribute("data-move")); return; }
     if (el.hasAttribute("data-rdc-retry")) { var rp = el.getAttribute("data-rdc-retry"); delete state.rdc[rp]; requestRdc(rp); $("rdcTile").innerHTML = rdcTile(rp); return; }
