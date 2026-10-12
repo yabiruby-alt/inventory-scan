@@ -904,7 +904,8 @@
   function itemRr(it) { return it.rr_qty != null ? Number(it.rr_qty) : rrQty(it.item_cd); }
   function itemTotal(it) { return Number(it.qty) + itemRr(it); }
   // RR 수량을 아는지: 조사 시작 때 고정했거나, RR 현재고가 한 번이라도 올라왔으면
-  function itemRrKnown(it) { return it.rr_qty != null || !!rrBasis() || Object.keys(state.rrParts).length > 0; }
+  function hasAny(o) { for (var k in o) return true; return false; }   // Object.keys(o).length > 0 을 목록 줄마다 하지 않게
+  function itemRrKnown(it) { return it.rr_qty != null || !!rrBasis() || hasAny(state.rrParts); }
   // 체크 기록의 비교 기준 (DMS + RR)
   function checkBase(c) { return Number(c.dms_qty) + (Number(c.rr_qty) || 0); }
   function splitNote(bmw, rr) { return rr ? '<div class="row-sub rr-split">BMW ' + qtyNum(bmw) + ' + RR ' + qtyNum(rr) + '</div>' : ''; }
@@ -1115,15 +1116,17 @@
       var msg = state.auditFilter === "left" ? (state.auditLoc ? "이 위치는 모두 확인했습니다" : "남은 부품이 없습니다") : state.auditFilter === "diff" ? "수량이 다른 부품이 없습니다" : "목록이 비어 있습니다";
       return '<div class="empty">' + msg + '</div>';
     }
-    var html = "", cur = null;
+    var html = "", cur = null, locN = {}, locLeftN = {};   // 위치별 전체·남은 건수 (줄마다 다시 세지 않게 한 번에)
+    items.forEach(function (x) { var l = x.lct_cd || ""; locN[l] = (locN[l] || 0) + 1; if (!x.status) locLeftN[l] = (locLeftN[l] || 0) + 1; });
+    // 화면 밖 묶음은 브라우저가 그리기를 미루게(content-visibility) — 긴 목록을 다시 그릴 때 가볍게. 묶음 높이는 줄 수로 어림
+    var listN = {}; list.forEach(function (x) { var l = x.lct_cd || ""; listN[l] = (listN[l] || 0) + 1; });
     list.forEach(function (it) {
       var loc = it.lct_cd || "";
       if (loc !== cur) {
         if (cur !== null) html += '</div>';
         cur = loc;
-        var locItems = items.filter(function (x) { return (x.lct_cd || "") === cur; });
-        var locLeft = locItems.filter(function (x) { return !x.status; }).length;
-        html += '<div class="loc-head"><span class="mono-loc">' + esc(cur || "위치 없음") + '</span><span>' + (started ? (locLeft ? locLeft + '건 남음' : '완료') : locItems.length + '건') + '</span></div><div class="group">';
+        var locLeft = locLeftN[cur] || 0;
+        html += '<div class="loc-head"><span class="mono-loc">' + esc(cur || "위치 없음") + '</span><span>' + (started ? (locLeft ? locLeft + '건 남음' : '완료') : locN[cur] + '건') + '</span></div><div class="group cv" style="contain-intrinsic-size:auto ' + (listN[cur] * 79) + 'px">';
       }
       var mark = (it.pending ? '<span class="pill">전송 대기</span>' : '') +
         (it.status === "ok" ? '<span class="pill ok">일치</span>'
@@ -1137,7 +1140,7 @@
 
   // 조사 시작 때 수량과 최근 DMS 현재고(10분마다 갱신) 차이 — 시작 뒤 출고·입고 (기다림 없이 바로)
   function syncNow(it) {
-    if (!Object.keys(state.parts).length) return null;
+    if (!hasAny(state.parts)) return null;
     var p = state.parts[it.item_cd];
     return { bmw: p ? Number(p.crt_qty) || 0 : 0, lct: p ? p.lct_cd : null };
   }
