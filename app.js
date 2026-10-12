@@ -342,13 +342,20 @@
     });
   }
 
+  // 앞자리 0이 빠진 라벨(엑셀에서 숫자로 바뀐 부품번호 등): 10자리 값이 목록에 없고 0을 붙인 11자리가 있으면 그 부품.
+  // 숫자만이 아니라 영문이 섞인 품번(01295A92E38 → 1295A92E38)도 같음
+  function fixZero(code) {
+    if (!/^[A-Z0-9]{10}$/.test(code) || state.parts[code]) return code;
+    var z = "0" + code;
+    return state.parts[z] || state.rrParts[z] || findAuditItem(z) ? z : code;
+  }
+
   // ---------- 스캔 처리 (카메라·블루투스·직접 입력 공통) ----------
   var lastScan = { code: "", at: 0 };
   function resolve(raw, fromScanner, fromCamera) {
     var code = normCode(raw);
     if (!code) return;
-    // 앞자리 0이 빠진 라벨(엑셀에서 숫자로 바뀐 부품번호 등): 10자리 숫자가 목록에 없고 0을 붙인 11자리가 있으면 그 부품
-    if (/^\d{10}$/.test(code) && !state.parts[code] && (state.parts["0" + code] || state.rrParts["0" + code])) code = "0" + code;
+    code = fixZero(code);
     if (fromScanner && !fromCamera) {
       var t = Date.now();
       if (code === lastScan.code && t - lastScan.at < SCAN_COOLDOWN_MS) return;
@@ -583,7 +590,7 @@
   // 확정한 바코드는 화면에서 1초 이상 사라지고 3초가 지나야 다시 읽음
   var votes = { code: "", n: 0, at: 0 };
   var fired = { code: "", at: 0, seen: 0 };
-  function knownCode(code) { return isLoc(code) || !!state.parts[code] || (state.auditOpen && !!findAuditItem(code)); }
+  function knownCode(code) { code = fixZero(code); return isLoc(code) || !!state.parts[code] || (state.auditOpen && !!findAuditItem(code)); }
 
   // 카메라로 찍은 부품에서 결과(재고 일치·수량 다름·위치 변경)를 고르면 바로 다음 부품을 찍을 수 있게 스캔 대기 화면으로 돌아감.
   // 방금 그 바코드는 화면에서 1초 이상 벗어나야 다시 읽음(같은 부품이 곧바로 다시 뜨지 않게)
@@ -1909,6 +1916,7 @@
       '<div class="section-label">스캔</div>' +
       '<div class="group">' +
         '<div class="row"><div class="row-main">카메라 스캔</div><label class="switch"><input type="checkbox" id="optCam"' + (store.get("camera", true) ? " checked" : "") + ' aria-label="카메라 스캔"><i></i></label></div>' +
+        '<div class="row"><div class="row-main">앱 버전</div><span class="row-value">v' + esc(APP_VER || "?") + '</span></div>' +
         '<div class="row"><div class="row-main">카메라 인식 방식</div><span class="row-value">' + esc(cam.engine || "준비 전") + '</span></div>' +
         '<div class="row"><div class="row-main">소리·진동<div class="row-sub">성공은 한 번, 실패는 두 번 울림</div></div><label class="switch"><input type="checkbox" id="optSound"' + (store.get("sound", true) ? " checked" : "") + ' aria-label="소리·진동"><i></i></label></div>' +
         '<div class="row"><div class="row-main">재고조사 다음 부품 자동<div class="row-sub">확인하면 같은 위치의 다음 부품을 바로 엶</div></div><label class="switch"><input type="checkbox" id="optAutoNext"' + (store.get("autoNext", true) ? " checked" : "") + ' aria-label="재고조사 다음 부품 자동"><i></i></label></div>' +
