@@ -1048,6 +1048,8 @@
         document.querySelectorAll('[data-last="' + pn + '"]').forEach(function (el) {
           el.innerHTML = lastAuditHtml(pn, el.getAttribute("data-skip") || null, el.classList.contains("lastaudit"), true);
         });
+        var sbx = $("spotBox");
+        if (sbx && sbx.getAttribute("data-pn") === pn) sbx.innerHTML = spotHtml(pn);
       });
   }
   // skipAudit: 지금 하고 있는 조사는 빼고 그 전 것 (재고 확인 창)
@@ -1075,6 +1077,21 @@
     if (r0.type === "part") return r0.code === pn ? "part" : null;
     return p.lct_cd === r0.code ? r0.via : null;
   }
+  // 오늘 이미 일치로 확인한 부품은 누른 표시(연한 초록 + 체크)로 바꿔 보여 줌 — 방금 누른 것, 서버에 남은 오늘 기록 모두
+  var spotDone = {};   // pn → { at, name } (방금 누른 것)
+  function spotToday(pn) {
+    var d = spotDone[pn];
+    if (d && kstDate(d.at) === kstDate()) return d;
+    var c = lastAudits[pn], x = c && c.rows && c.rows[0];
+    if (x && x.status === "ok" && x.checked_at && kstDate(new Date(x.checked_at).getTime()) === kstDate()) return { at: new Date(x.checked_at).getTime(), name: x.checked_by_name };
+    return null;
+  }
+  function spotHtml(pn) {
+    var p = state.parts[pn], d = spotToday(pn);
+    if (d) return '<div class="btn-spot done">✓ 재고 일치 확인됨<small>오늘 ' + hhmm(new Date(d.at).toISOString()) + (d.name ? ' · ' + esc(d.name) : '') + '</small></div>';
+    return spotVia(pn) ? '<button class="btn-spot" data-spot="' + esc(pn) + '">재고 일치<small>실물 수량이 ' + qtyNum(Number(p.crt_qty) + rrQty(pn)) + ' EA 와 같으면 누르세요</small></button>'
+      : '<div class="btn-spot off">재고 일치<small>바코드를 스캔하면 누를 수 있습니다</small></div>';
+  }
   async function spotOk(pn, btn) {
     var via = spotVia(pn), p = state.parts[pn];
     if (!via || !p) { toast("부품이나 위치 바코드를 스캔한 뒤에 누를 수 있습니다"); return; }
@@ -1085,6 +1102,7 @@
     btn.disabled = false;
     if (r.error) { toast("기록하지 못했습니다: " + (r.error.message || "연결을 확인하세요")); return; }
     delete lastAudits[pn];
+    spotDone[pn] = { at: Date.now(), name: state.user.name };
     if (r.data && r.data.cleared) await loadChecks();
     if (!nextScan()) render(false);
     toast("재고 일치로 기록했습니다 · " + qtyNum(Number(p.crt_qty) + rrQty(pn)) + " EA" + (r.data && r.data.cleared ? " · 수량 다름 체크는 지웠습니다" : ""));
@@ -1105,8 +1123,7 @@
         '<div class="tile rdc" id="rrTile" data-pn="' + esc(pn) + '">' + rrTile(pn) + '</div>' +
         '<div class="tile rdc" id="rdcTile" data-pn="' + esc(pn) + '">' + rdcTile(pn) + '</div>' +
       '</div>' +
-      (spotVia(pn) ? '<button class="btn-spot" data-spot="' + esc(pn) + '">재고 일치<small>실물 수량이 ' + qtyNum(Number(p.crt_qty) + rrQty(pn)) + ' EA 와 같으면 누르세요</small></button>'
-        : '<div class="btn-spot off">재고 일치<small>바코드를 스캔하면 누를 수 있습니다</small></div>') +
+      '<div id="spotBox" data-pn="' + esc(pn) + '">' + spotHtml(pn) + '</div>' +
       moveBanner(pn) +
       (c ? '<div class="banner">수량 다름 체크됨 · DMS ' + qtyNum(c.dms_qty) + (Number(c.rr_qty) ? ' + RR ' + qtyNum(c.rr_qty) : '') + ' / 실사 ' + qtyNum(c.counted_qty) + (c.memo ? ' · ' + esc(c.memo) : '') + '</div>' : '') +
       '<div class="section-label">부품 정보</div>' +
