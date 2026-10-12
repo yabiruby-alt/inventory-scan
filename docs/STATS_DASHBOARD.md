@@ -58,7 +58,7 @@ const { data } = await supabase.rpc("inv_stat_audits", { p_from: "2026-10-01", p
 - **스캔 수는 2026-10-12 배포(앱 v51)부터** 쌓인다. 그 전 스캔은 없다. 같은 바코드를 3초 안에 다시 찍은 것, Z 코드는 세지 않는다.
 - `audit_check` 날짜는 확인 버튼을 누른 시각(`marked_at`, 없으면 서버 기록 시각) 기준. 확인을 되돌리면 건수에서 빠진다.
 - "하루 작업 건수" = 그날 `audit_check` 합계(+ 원하면 `spot_check`, `loc_change` done, `check`).
-- `spot_check` 는 같은 사람이 같은 날 같은 부품을 다시 눌러도 1건. 재고조사 작업시간(`inv_stat_active`)·조사 요약에는 들어가지 않는다.
+- `spot_check` 는 같은 사람이 같은 날 같은 부품을 다시 눌러도 1건. 일치를 누른 뒤 같은 날 그 부품을 수량 다름으로 체크하면 그 1건은 빠진다(`024_spot_diff.sql`, n 이 0 인 줄이 나올 수 있음). 재고조사 작업시간(`inv_stat_active`)·조사 요약에는 들어가지 않는다.
 
 ## 2) `inv_stat_active(p_from, p_to)` — 재고조사 작업시간
 열: `stat_date, branch, user_key, user_name, checks, active_sec, first_at, last_at`

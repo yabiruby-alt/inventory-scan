@@ -2399,6 +2399,7 @@
     if (old) r = await sb.from("inv_checks").update({ counted_qty: v, memo: memo || null, dms_qty: p.crt_qty, rr_qty: rrQty(pn) }).eq("id", old.id);
     else r = await sb.from("inv_checks").insert({ item_cd: pn, item_nm: p.item_nm, lct_cd: p.lct_cd, dms_qty: p.crt_qty, rr_qty: rrQty(pn), counted_qty: v, memo: memo || null, checked_by: state.user.id });
     if (r.error) { toast("저장하지 못했습니다: " + r.error.message); $("saveCheck").disabled = false; return; }
+    delete spotDone[pn]; delete lastAudits[pn];   // 수량 다름으로 바뀜 → 일치 확인 표시를 지움 (서버도 그날 일치 건수에서 뺌)
     await loadChecks();
     closeSheet(); if (nextScan()) toast("수량 다름으로 체크했습니다 · " + pn); else render(false);
   }
