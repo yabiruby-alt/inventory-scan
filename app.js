@@ -993,6 +993,7 @@
 
   function viewPart(pn) {
     var p = state.parts[pn];
+    setTimeout(function () { autoLivePart(pn); }, 0);   // 이 부품만 DMS 실시간 조회 (화면은 먼저 보여 줌)
     var c = openChecksByItem()[pn];
     var moving = state.moves[pn] && state.moves[pn].status === "pending";
     return resultHead("부품", pn) +
@@ -1012,7 +1013,7 @@
         '<div class="row"><div class="row-main">위치</div><span class="row-value mono-loc">' + esc(p.lct_cd || "없음") + '</span></div>' +
         '<div class="row"><div class="row-main">ALOIS</div><span class="row-value">' + esc(p.alois_cd || "-") + (GROUPS[(p.alois_cd || "")[0]] ? ' · ' + GROUPS[p.alois_cd[0]] : '') + '</span></div>' +
         '<div class="row"><div class="row-main">최종 입고</div><span class="row-value">' + esc(p.last_purc_dt || "-") + '</span></div>' +
-        '<div class="row"><div class="row-main">재고 기준</div><span class="row-value">' + basis() + ' · 10분마다 갱신</span></div>' +
+        '<div class="row"><div class="row-main">재고 기준</div><span class="row-value">' + (liveDone[pn] ? hhmm(new Date(liveDone[pn]).toISOString()) + ' · DMS 실시간 조회' : basis() + ' · 10분마다 갱신') + '</span></div>' +
       '</div>' +
       '<div class="section-label">작업</div>' +
       '<div class="group">' +
@@ -1299,19 +1300,24 @@
         '<button class="btn-primary" id="aDiffSave" data-pn="' + esc(pn) + '" hidden>수량 다름으로 저장</button>' +
       '</div>'
     );
+    // 창을 열면 이 부품만 DMS 실시간 조회 (실패하면 조용히 최근 DMS 값 그대로)
+    if ($("aNowBtn") && !(curA && curA.finished_at) && liveOk(pn)) auditNow($("aNowBtn"), true);
   }
   function showDiffBox() { $("aDiffBox").hidden = false; document.querySelector(".ai-actions").hidden = true; $("aDiffSave").hidden = false; }
   var CHECK_ICON = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3.5 8.5l3 3 6-7" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>';
 
   // 재고 확인 창: 조사 시작 때 수량(스냅샷)과 지금 DMS 수량 비교 — 시작 뒤 출고·입고된 부품 확인용
-  async function auditNow(btn) {
-    var box = $("aNow"), pn = box.getAttribute("data-pn");
+  async function auditNow(btn, silent) {
+    var box = $("aNow"), pn = box.getAttribute("data-pn"), prevHtml = box.innerHTML;
     btn.disabled = true; btn.innerHTML = '<span class="spin"></span>';
+    liveAsked[pn] = Date.now();
     try {
       var id = await sendRequest("stock", pn);
       waitRequest(id, function (res) {
         var b = $("aNow");
         if (!b || b.getAttribute("data-pn") !== pn) return;   // 그 사이 창을 닫거나 다른 부품을 엶
+        if (res.status === "done") liveDone[pn] = Date.now();
+        else if (silent) { b.innerHTML = prevHtml; return; }
         if (res.status !== "done") { b.innerHTML = '<div class="ai-row"><div class="ai-l">지금 DMS<small class="warn-text">조회 실패: ' + esc(res.error || "") + '</small></div><button class="ai-link" id="aNowBtn">다시</button></div>'; return; }
         var r = res.result, p = state.parts[pn];
         if (p && r.found) {   // 받은 김에 현재고도 갱신
@@ -1322,6 +1328,7 @@
         if (state.tab === "audit") render(false);   // 목록의 '조사 시작 뒤' 표시도 새 값으로
       });
     } catch (e) {
+      if (silent) { if ($("aNow") && $("aNow").getAttribute("data-pn") === pn) $("aNow").innerHTML = prevHtml; return; }
       btn.disabled = false; btn.textContent = "다시 조회";
       toast("조회하지 못했습니다: " + e.message);
     }
@@ -2262,11 +2269,21 @@
     }
   }
 
-  async function refreshPart(pn) {
+  // 보고 있는 부품 1개만 DMS에서 실시간 조회 (한 번에 0.1초 안팎이라 DMS 부담이 거의 없음).
+  //   부품 화면·재고 확인 창을 열 때 자동으로, 같은 부품은 LIVE_TTL_MS 안에 다시 묻지 않음. 전체 목록은 그대로 10분마다
+  var LIVE_TTL_MS = 60000, liveAsked = {}, liveDone = {};
+  function liveOk(pn) {
+    return !!state.user && navigator.onLine && !daemonStale() && !(liveAsked[pn] && Date.now() - liveAsked[pn] < LIVE_TTL_MS);
+  }
+  function autoLivePart(pn) { if (liveOk(pn)) refreshPart(pn, true); }
+
+  async function refreshPart(pn, silent) {
+    liveAsked[pn] = Date.now();
     try {
       var id = await sendRequest("stock", pn);
       waitRequest(id, function (res) {
-        if (res.status !== "done") { toast("조회 실패: " + (res.error || "")); return; }
+        if (res.status !== "done") { if (!silent) toast("조회 실패: " + (res.error || "")); return; }
+        liveDone[pn] = Date.now();
         var p = state.parts[pn], r = res.result;
         if (p && r.found) {
           if (p.lct_cd !== r.lct_cd) {
@@ -2276,10 +2293,10 @@
           p.crt_qty = r.crt_qty; p.lct_cd = r.lct_cd;
           if (r.rdc_qty != null) state.rdc[pn] = { status: "done", result: r, at: Date.now() };
         }
-        toast("현재고 " + qtyNum(r.crt_qty) + "개 · 위치 " + (r.lct_cd || "없음"));
-        if (state.tab === "scan") render(false);
+        if (!silent) toast("현재고 " + qtyNum(r.crt_qty) + "개 · 위치 " + (r.lct_cd || "없음"));
+        if (state.tab === "scan" && $("sheet").hidden) render(false);
       });
-    } catch (e) { toast("요청하지 못했습니다: " + e.message); }
+    } catch (e) { if (!silent) toast("요청하지 못했습니다: " + e.message); }
   }
 
   async function lookupUnknown(pn, btn) {
