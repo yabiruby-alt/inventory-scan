@@ -468,3 +468,4 @@ button.row:active, .row-btn:active { background: var(--fill); }
 .btn-spot:disabled { opacity: .5; }
 .btn-spot.off { background: var(--fill); color: var(--label2); font-weight: 600; }
 .btn-spot.done { background: rgba(52,199,89,.16); color: var(--ok); box-shadow: inset 0 0 0 1.5px var(--ok); }
+.btn-spot.diff { background: var(--warn-soft); color: var(--warn); box-shadow: inset 0 0 0 1.5px var(--warn); }

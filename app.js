@@ -1058,6 +1058,9 @@
     var c = lastAudits[pn];
     if (!c || !c.rows) return c && !c.loading && !c.rows ? '' : '<span class="la-dim">재고 확인 이력 확인 중…</span>';
     var x = c.rows.filter(function (r) { return !skipAudit || r.audit_id !== skipAudit; })[0];
+    var ck = openChecksByItem()[pn];   // 스캔 탭에서 건 수량 다름 체크가 더 최근이면 그것이 마지막 확인
+    if (ck && !ck.audit_id && ck.checked_at && (!x || new Date(ck.checked_at) > new Date(x.checked_at)))
+      x = { checked_at: ck.checked_at, status: "diff", counted: ck.counted_qty, qty: ck.dms_qty, rr_qty: ck.rr_qty, checked_by_name: ck.checked_by_name, memo: ck.memo, inv_audits: { kind: "scan" } };
     if (!x) return '<span class="la-dim">' + (tile ? '재고 확인 이력 없음' : '이전 재고 확인 이력 없음') + '</span>';
     var d = new Date(x.checked_at), when = (d.getMonth() + 1) + "/" + d.getDate();
     var kind = KIND_SHORT[x.inv_audits && x.inv_audits.kind] || "";
@@ -1087,7 +1090,9 @@
     return null;
   }
   function spotHtml(pn) {
-    var p = state.parts[pn], d = spotToday(pn);
+    var p = state.parts[pn], d = spotToday(pn), ck = openChecksByItem()[pn];
+    if (ck) return '<button class="btn-spot diff" data-check="' + esc(pn) + '">! 수량 다름 체크됨<small>실사 ' + qtyNum(ck.counted_qty) + ' / DMS ' + qtyNum(Number(ck.dms_qty) + (Number(ck.rr_qty) || 0)) +
+      (ck.memo ? ' · ' + esc(ck.memo) : '') + ' · 누르면 수정</small></button>';
     if (d) return '<div class="btn-spot done">✓ 재고 일치 확인됨<small>오늘 ' + hhmm(new Date(d.at).toISOString()) + (d.name ? ' · ' + esc(d.name) : '') + '</small></div>';
     return spotVia(pn) ? '<button class="btn-spot" data-spot="' + esc(pn) + '">재고 일치<small>실물 수량이 ' + qtyNum(Number(p.crt_qty) + rrQty(pn)) + ' EA 와 같으면 누르세요</small></button>'
       : '<div class="btn-spot off">재고 일치<small>바코드를 스캔하면 누를 수 있습니다</small></div>';
@@ -1125,7 +1130,6 @@
       '</div>' +
       '<div id="spotBox" data-pn="' + esc(pn) + '">' + spotHtml(pn) + '</div>' +
       moveBanner(pn) +
-      (c ? '<div class="banner">수량 다름 체크됨 · DMS ' + qtyNum(c.dms_qty) + (Number(c.rr_qty) ? ' + RR ' + qtyNum(c.rr_qty) : '') + ' / 실사 ' + qtyNum(c.counted_qty) + (c.memo ? ' · ' + esc(c.memo) : '') + '</div>' : '') +
       '<div class="section-label">부품 정보</div>' +
       '<div class="group">' +
         '<div class="row"><div class="row-main">위치</div><span class="row-value mono-loc">' + esc(p.lct_cd || "없음") + '</span></div>' +
