@@ -44,7 +44,7 @@
     ".rp-sign div{width:19mm;border:.5px solid #9aa0aa;text-align:center}",
     ".rp-sign div+div{border-left:0}",
     ".rp-sign span{display:block;padding:1.2mm 0;font-size:7.5pt;color:#6b7280;letter-spacing:.2em;border-bottom:.5px solid #9aa0aa}",
-    ".rp-sign i{display:block;height:11.5mm}",
+    ".rp-sign i{display:block;height:15mm}",
     ".rp-rule{height:1mm;border-top:1.6px solid #1b1f2a;border-bottom:.5px solid #1b1f2a;margin:0 0 3.5mm}",
     // 일시: 이름표를 위에 작게, 값은 아래에
     ".rp-meta{display:flex;margin:0 0 4mm}",
