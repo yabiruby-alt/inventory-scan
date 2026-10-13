@@ -95,7 +95,7 @@
     ".rp-none{color:#6b7280;padding:4.5mm 0;text-align:center;border-bottom:.5px solid #e3e5e9}"
   ].join("");
 
-  // 걸린 시간: 스캔 → 확인 누름 (45초 / 3분 12초 / 1시간 5분)
+  // 걸린 시간: 재고 확인 창을 연 때 → 확인 누름 (45초 / 3분 12초 / 1시간 5분). 창 연 시각이 없는 옛 기록은 '-'
   function elapsed(from, to) {
     if (!from || !to) return "-";
     var s = Math.round((new Date(to) - new Date(from)) / 1000);
@@ -122,7 +122,7 @@
    * 표의 rows 가 <tbody>…</tbody> 문자열이면 그 묶음(품목 줄 + 메모 줄)을 한 덩어리로 보고 나눈다.
    * d: {title, branch, period, started_at, started_by, finished_at, finished_by, printed_at,
    *     total, ok, diff, left, diffItems[{lct_cd,item_cd,item_nm,qty,rr,counted,by,memo}], leftItems[{lct_cd,item_cd,item_nm,qty,rr}],
-   *     doneItems[{lct_cd,item_cd,item_nm,qty,rr,counted,status,via,scanned_at,marked_at,by}] (확인한 부품 전부),
+   *     doneItems[{lct_cd,item_cd,item_nm,qty,rr,counted,status,via,scanned_at,marked_at,opened_at,by}] (확인한 부품 전부, opened_at = 확인 창을 연 시각),
    *     removedItems[{lct_cd,item_cd,item_nm,qty,rr,at,by}] (DMS 갱신 때 재고 0으로 뺀 부품)}
    *   qty = BMW(DMS) 수량, rr = RR 수량. 차이 = 실사 - (BMW + RR)
    */
@@ -191,7 +191,7 @@
     // 확인 내역: 확인한 부품 전부(일치 포함) — 어떤 방식으로 언제 스캔하고 누가 확인했는지, 스캔에서 확인까지 걸린 시간
     // 줄 높이가 들쭉날쭉하지 않게 모든 칸을 한 줄로 두고(넘치면 …), 길어지는 예외 사유는 표 아래에 따로 적는다
     if (dn.length) {
-      out.push({ keep: true, html: '<h2 class="rp-h">확인 내역<em>' + dn.length + '건</em><span class="rp-hn">스캔 = 위치·부품 바코드를 찍은 시각 · 확인 = 일치/수량 다름을 누른 시각 · 걸린시간 = 스캔부터 확인까지</span></h2>' });
+      out.push({ keep: true, html: '<h2 class="rp-h">확인 내역<em>' + dn.length + '건</em><span class="rp-hn">스캔 = 위치·부품 바코드를 찍은 시각 · 확인 = 일치/수량 다름을 누른 시각 · 걸린시간 = 재고 확인 창을 연 때부터 확인까지</span></h2>' });
       out.push({ table: {
         cls: "sm",
         head: '<colgroup><col style="width:16mm"><col style="width:23mm"><col><col style="width:10mm"><col style="width:14mm"><col style="width:19mm"><col style="width:15mm"><col style="width:15mm"><col style="width:16mm"><col style="width:15mm"></colgroup>' +
@@ -200,7 +200,7 @@
           return '<tr><td class="m k">' + esc(it.lct_cd || "-") + '</td><td class="m k">' + esc(it.item_cd) + '</td><td>' + esc(it.item_nm) + '</td>' +
             '<td class="n">' + num(Number(it.qty) + (Number(it.rr) || 0)) + '</td>' +
             '<td' + (it.status === "ok" ? '>일치' : ' class="neg">다름 ' + num(it.counted)) + '</td>' +
-            '<td>' + esc(it.via) + '</td><td class="t">' + hms(it.scanned_at) + '</td><td class="t">' + hms(it.marked_at) + '</td><td class="t">' + elapsed(it.scanned_at, it.marked_at) + '</td><td>' + esc(it.by || "") + '</td></tr>';
+            '<td>' + esc(it.via) + '</td><td class="t">' + hms(it.scanned_at) + '</td><td class="t">' + hms(it.marked_at) + '</td><td class="t">' + elapsed(it.opened_at, it.marked_at) + '</td><td>' + esc(it.by || "") + '</td></tr>';
         })
       } });
       // 예외로 확인한 건은 사유를 따로 표로 (확인 내역 표는 한 줄로 두기 위해)

@@ -224,6 +224,7 @@ function check(name, ok, extra) { results.push((ok ? 'PASS ' : 'FAIL ') + name +
   check('연결 상태: 다시 연결·전송 끝나면 초록 점만', pillOk === 'netpill ok|', pillOk);
   const pv = auditItems[0];
   check('확인 방식·스캔 시각·누른 시각 저장', pv.loc_via === 'scanner' && !!pv.loc_scanned_at && !!pv.marked_at && !pv.exempt_reason, JSON.stringify({ v: pv.loc_via, s: pv.loc_scanned_at, m: pv.marked_at }));
+  check('확인 창을 연 시각 저장 (확인 누른 시각보다 앞)', !!pv.opened_at && Date.parse(pv.opened_at) <= Date.parse(pv.marked_at), JSON.stringify({ o: pv.opened_at, m: pv.marked_at }));
 
   // ===== 2. 수량 다름 → 다시 수량 다름 → 일치 =====
   async function mark(pn, diff, n, memo) {

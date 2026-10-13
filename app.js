@@ -1345,6 +1345,7 @@
   // 조사마다 스캐너·카메라로 찍은 위치(그리고 부품 바코드 "#품번")와 시각을 이 휴대폰에 둠 — 그 조사가 끝날 때까지 유효
   var scanned = store.get("auditScans", {});
   var sheetExempt = {};   // 이 창에서 사유를 적고 연 부품 (창을 닫으면 사라짐)
+  var auditOpen = { pn: null, at: null };   // 재고 확인 창을 연 부품과 시각 — 보고서 '걸린시간'(창을 연 때부터 확인까지)
   function markScanned(key, via) {
     var a = currentAudit();
     if (!a) return;
@@ -1390,6 +1391,7 @@
 
   // 재고 확인 창 (애플 시트 형태): 품번 크게 → 수량 카드(조사 수량 / 최근 DMS) → 상태 한 줄 → 버튼 두 개
   function openAuditItem(pn) {
+    if (auditOpen.pn !== pn || $("sheet").hidden) auditOpen = { pn: pn, at: new Date().toISOString() };
     var it = findAuditItem(pn), curA = currentAudit(), proof = proofOf(it), locked = !proof;
     var done = it.status === "ok" ? '<span class="ai-done">' + CHECK_ICON + '일치로 확인함 · ' + hhmm(it.checked_at) + ' ' + esc(it.checked_by_name || "") + '</span>'
       : it.status === "diff" ? '<span class="ai-done warn">실사 ' + qtyNum(it.counted) + '개로 기록함 · ' + hhmm(it.checked_at) + ' ' + esc(it.checked_by_name || "") + '</span>' : '';
@@ -1491,10 +1493,10 @@
     var pf = proofOf(it);
     if (!pf) { toast("위치를 먼저 스캔하세요"); openAuditItem(pn); return; }
     var job = { userId: state.user.id, auditId: a.id, kind: a.kind, pn: pn, status: status, counted: counted, memo: memo || null, tries: 0,
-      proof: { loc_via: pf.via, loc_scanned_at: pf.at, marked_at: new Date().toISOString(), exempt_reason: pf.reason || null } };
+      proof: { loc_via: pf.via, loc_scanned_at: pf.at, marked_at: new Date().toISOString(), opened_at: auditOpen.pn === pn ? auditOpen.at : null, exempt_reason: pf.reason || null } };
     // 되돌리기용: 누르기 전 상태
     var before = { userId: job.userId, auditId: a.id, kind: a.kind, pn: pn, status: it.status || null, counted: it.status === "diff" ? it.counted : null, memo: it.status ? it.memo || null : null, tries: 0,
-      proof: { loc_via: it.loc_via || null, loc_scanned_at: it.loc_scanned_at || null, marked_at: it.marked_at || null, exempt_reason: it.exempt_reason || null } };
+      proof: { loc_via: it.loc_via || null, loc_scanned_at: it.loc_scanned_at || null, marked_at: it.marked_at || null, opened_at: it.opened_at || null, exempt_reason: it.exempt_reason || null } };
     delete sheetExempt[pn];
     var res = await sendAuditMark(job);
     var saved = status === "ok" ? "일치로 저장했습니다" : "실사 " + qtyNum(counted) + "개로 저장했습니다";
@@ -1710,7 +1712,7 @@
         .map(function (it) {
           return { lct_cd: it.lct_cd, item_cd: it.item_cd, item_nm: it.item_nm, qty: it.qty, rr: itemRr(it), counted: it.counted, status: it.status,
             via: VIA_LABEL[it.loc_via] || "-", reason: it.loc_via === "exempt" ? it.exempt_reason || "사유 없음" : null,   // 보고서 표는 한 줄이라 예외 사유는 표 아래에 따로
-            scanned_at: it.loc_scanned_at || null, marked_at: it.marked_at || it.checked_at || null, by: it.checked_by_name };
+            scanned_at: it.loc_scanned_at || null, marked_at: it.marked_at || it.checked_at || null, opened_at: it.opened_at || null, by: it.checked_by_name };
         }),
       removedItems: (a.qty_removed || []).map(function (x) { return { lct_cd: x.lct_cd, item_cd: x.item_cd, item_nm: x.item_nm, qty: x.qty, rr: x.rr_qty, at: x.removed_at, by: x.removed_by }; })
     };
@@ -2061,7 +2063,7 @@
     var a = document.activeElement;
     if (a && $("sheet").contains(a)) a.blur();
     $("sheet").hidden = true; $("backdrop").hidden = true;
-    sheetExempt = {}; moveFromAudit = null;
+    sheetExempt = {}; moveFromAudit = null; auditOpen = { pn: null, at: null };
     if (exitOpen) { exitOpen = false; armBack(); }
   }
   $("backdrop").addEventListener("click", closeSheet);
