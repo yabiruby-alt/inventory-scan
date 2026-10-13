@@ -95,7 +95,7 @@
     out.push({ html: '<h2 class="rp-h">수량 다름 ' + d.diffItems.length + '건</h2>' });
     if (d.diffItems.length) {
       out.push({ table: {
-        head: '<colgroup><col style="width:18mm"><col style="width:25mm"><col><col style="width:11mm"><col style="width:10mm"><col style="width:11mm"><col style="width:11mm"><col style="width:15mm"><col style="width:24mm"></colgroup>' +
+        head: '<colgroup><col style="width:17mm"><col style="width:24mm"><col><col style="width:11mm"><col style="width:9mm"><col style="width:11mm"><col style="width:11mm"><col style="width:14mm"><col style="width:48mm"></colgroup>' +
           '<thead><tr><th>위치</th><th>품번</th><th>품명</th><th class="n">BMW</th><th class="n">RR</th><th class="n">실사</th><th class="n">차이</th><th>확인자</th><th>메모</th></tr></thead>',
         rows: d.diffItems.map(function (it) {
           var df = Number(it.counted) - Number(it.qty) - (Number(it.rr) || 0);   // 차이 = 실사 - (BMW + RR)

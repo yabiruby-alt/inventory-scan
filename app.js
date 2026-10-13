@@ -1413,7 +1413,8 @@
       (locked ? lockHtml(it) : '') +
       '<div id="aDiffBox" hidden>' +
         '<div class="group ai-diff"><div class="row stepper"><div class="row-main">실사 수량</div><div class="stepper-ctl"><button type="button" data-astep="-1" aria-label="하나 빼기">−</button><input id="aCountIn" type="text" inputmode="numeric" autocomplete="off" class="qty-in" value="' + qtyNum(it.status === "diff" ? it.counted : itemTotal(it)) + '" aria-label="실사 수량"><button type="button" data-astep="1" aria-label="하나 더하기">+</button></div></div>' +
-        '<div class="row"><textarea class="field" id="aMemoIn" rows="2" placeholder="메모 (선택)" aria-label="메모"></textarea></div></div>' +
+        '<div class="row"><textarea class="field" id="aMemoIn" rows="2" placeholder="보고서에 들어갈 메모 (예: 파손, 오출고 추정, 다른 위치에서 발견)" aria-label="보고서 메모"></textarea></div></div>' +
+        '<p class="ai-foot">메모는 보고서의 수량 다름 표에 그대로 나옵니다</p>' +
       '</div>' +
       // 엄지로 바로 누르게 창 맨 아래에 고정
       '<div class="ai-dock"' + (locked ? ' hidden' : '') + '>' +
@@ -1427,7 +1428,12 @@
     // 창을 열면 이 부품만 DMS 실시간 조회 (실패하면 조용히 최근 DMS 값 그대로)
     if ($("aNowBtn") && !(curA && curA.finished_at) && liveOk(pn)) auditNow($("aNowBtn"), true);
   }
-  function showDiffBox() { $("aDiffBox").hidden = false; document.querySelector(".ai-actions").hidden = true; $("aDiffSave").hidden = false; }
+  function showDiffBox() {
+    $("aDiffBox").hidden = false; document.querySelector(".ai-actions").hidden = true; $("aDiffSave").hidden = false;
+    var it = findAuditItem($("aDiffSave").getAttribute("data-pn"));
+    if (it && it.status === "diff" && it.memo && !$("aMemoIn").value) $("aMemoIn").value = it.memo;   // 고칠 때 적어 둔 메모를 다시 보여 줌
+    setTimeout(function () { if ($("aMemoIn")) $("aMemoIn").scrollIntoView({ block: "nearest" }); }, 50);
+  }
   var CHECK_ICON = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3.5 8.5l3 3 6-7" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>';
 
   // 재고 확인 창: 조사 시작 때 수량(스냅샷)과 지금 DMS 수량 비교 — 시작 뒤 출고·입고된 부품 확인용
@@ -1492,8 +1498,11 @@
     auditCounts[a.id] = auditStatsOf(state.auditItems);
     closeSheet(); render(false);
     if (res === "check") { toast("조사 결과는 저장했지만 체크 기록에 반영하지 못했습니다. 다시 저장해 주세요"); return; }
-    toastUndo(pn + " · " + saved, function () { undoAudit(before); });
-    if (store.get("autoNext", true) && a.id === (currentAudit() || {}).id) goNext(it);
+    // 부품 바코드를 찍어 확인했고 같은 위치에 남은 부품이 있으면 다음 부품 창을 띄우지 않음 (목록 순서대로 집지 않으므로 다음 것도 직접 찍음)
+    var sameLeft = state.auditItems.filter(function (x) { return x !== it && !x.status && (x.lct_cd || "") === (it.lct_cd || ""); }).length;
+    var byPart = pf.via === "part" && sameLeft > 0;
+    toastUndo(pn + " · " + saved + (byPart ? " · 이 위치 남은 " + sameLeft + "건" : ""), function () { undoAudit(before); });
+    if (!byPart && store.get("autoNext", true) && a.id === (currentAudit() || {}).id) goNext(it);
   }
   // 확인 뒤: 같은 위치의 다음 미확인 부품을 바로 엶. 위치를 다 끝냈으면 '위치 완료' 창 + 다음 위치 안내
   function goNext(it) {
