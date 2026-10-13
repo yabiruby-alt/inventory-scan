@@ -1693,40 +1693,7 @@
     toast("조사를 다시 열었습니다. 남은 것부터 이어서 확인하세요");
   }
 
-  // 현장 확인 점검: 예외 / 스캔하고 오래 지나 확인 / 같은 사람이 너무 빠르게 연달아 확인 / 기록 없음
-  var PROOF_GAP_MIN = 30, PROOF_QUICK_SEC = 3;
-  var VIA_LABEL = { scanner: "위치 스캔", camera: "위치 스캔(카메라)", part: "부품 스캔", exempt: "예외" };
-  function proofReport(items) {
-    var done = items.filter(function (it) { return it.status; });
-    var used = done.some(function (it) { return it.loc_via; });   // 이 기능 전에 확인한 조사는 점검 안 함
-    var sum = { scanner: 0, camera: 0, part: 0, exempt: 0, none: 0 };
-    var flags = {};
-    var add = function (it, msg) { (flags[it.item_cd] = flags[it.item_cd] || { it: it, notes: [] }).notes.push(msg); };
-    done.forEach(function (it) {
-      sum[it.loc_via || "none"]++;
-      if (it.loc_via === "exempt") add(it, "예외: " + (it.exempt_reason || ""));
-      else if (!it.loc_via) { if (used) add(it, "스캔 기록 없음"); }
-      else if (it.loc_scanned_at && it.marked_at) {
-        var gap = (new Date(it.marked_at) - new Date(it.loc_scanned_at)) / 60000;
-        if (gap > PROOF_GAP_MIN) add(it, "스캔 " + (gap >= 120 ? Math.round(gap / 60) + "시간" : Math.round(gap) + "분") + " 뒤 확인");
-      }
-    });
-    // 사람별로 누른 순서대로: 앞 확인과 몇 초 차이인지
-    var byWho = {};
-    done.forEach(function (it) { if (it.marked_at) (byWho[it.checked_by_name || ""] = byWho[it.checked_by_name || ""] || []).push(it); });
-    Object.keys(byWho).forEach(function (w) {
-      var l = byWho[w].sort(function (x, y) { return x.marked_at.localeCompare(y.marked_at); });
-      for (var i = 1; i < l.length; i++) {
-        var sec = (new Date(l[i].marked_at) - new Date(l[i - 1].marked_at)) / 1000;
-        if (sec < PROOF_QUICK_SEC) add(l[i], "앞 확인 " + Math.max(0, Math.round(sec * 10) / 10) + "초 뒤 (빠른 확인)");
-      }
-    });
-    return {
-      summary: used ? sum : null,
-      items: Object.keys(flags).map(function (k) { var f = flags[k], it = f.it; return { lct_cd: it.lct_cd, item_cd: it.item_cd, item_nm: it.item_nm, result: it.status === "ok" ? "일치" : "수량 다름", by: it.checked_by_name, note: f.notes.join(" · ") }; })
-        .sort(function (x, y) { return (x.lct_cd || "~").localeCompare(y.lct_cd || "~") || x.item_cd.localeCompare(y.item_cd); })
-    };
-  }
+  var VIA_LABEL = { scanner: "위치 스캔", camera: "카메라 스캔", part: "부품 스캔", exempt: "예외" };
 
   var REPORT_TITLE = { daily: "일일 재고조사 보고서", aging: "일일장기 재고조사 보고서", weekly: "주간 재고조사 보고서" };
   function reportData(a, items) {
@@ -1742,11 +1709,10 @@
         .sort(function (x, y) { return (x.lct_cd || "~").localeCompare(y.lct_cd || "~") || x.item_cd.localeCompare(y.item_cd); })
         .map(function (it) {
           return { lct_cd: it.lct_cd, item_cd: it.item_cd, item_nm: it.item_nm, qty: it.qty, rr: itemRr(it), counted: it.counted, status: it.status,
-            via: it.loc_via === "exempt" ? "예외" + (it.exempt_reason ? " (" + it.exempt_reason + ")" : "") : VIA_LABEL[it.loc_via] || "-",
+            via: VIA_LABEL[it.loc_via] || "-", reason: it.loc_via === "exempt" ? it.exempt_reason || "사유 없음" : null,   // 보고서 표는 한 줄이라 예외 사유는 표 아래에 따로
             scanned_at: it.loc_scanned_at || null, marked_at: it.marked_at || it.checked_at || null, by: it.checked_by_name };
         }),
-      removedItems: (a.qty_removed || []).map(function (x) { return { lct_cd: x.lct_cd, item_cd: x.item_cd, item_nm: x.item_nm, qty: x.qty, rr: x.rr_qty, at: x.removed_at, by: x.removed_by }; }),
-      proof: proofReport(items)
+      removedItems: (a.qty_removed || []).map(function (x) { return { lct_cd: x.lct_cd, item_cd: x.item_cd, item_nm: x.item_nm, qty: x.qty, rr: x.rr_qty, at: x.removed_at, by: x.removed_by }; })
     };
   }
   // 파일 이름: "261007 일일 재고조사 보고서", "260928-1003 주간 재고조사 보고서"

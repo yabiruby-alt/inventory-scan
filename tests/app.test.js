@@ -226,9 +226,9 @@ function check(name, ok, extra) { results.push((ok ? 'PASS ' : 'FAIL ') + name +
   check('확인 방식·스캔 시각·누른 시각 저장', pv.loc_via === 'scanner' && !!pv.loc_scanned_at && !!pv.marked_at && !pv.exempt_reason, JSON.stringify({ v: pv.loc_via, s: pv.loc_scanned_at, m: pv.marked_at }));
 
   // ===== 2. 수량 다름 → 다시 수량 다름 → 일치 =====
-  async function mark(pn, diff, n) {
+  async function mark(pn, diff, n, memo) {
     await page.click('[data-aitem="' + pn + '"]');
-    if (diff) { await page.click('#aDiffToggle'); if (await page.isVisible('#aOk')) throw new Error('수량 다름을 누르면 일치 버튼이 숨어야 함'); await page.fill('#aCountIn', String(n)); await page.click('#aDiffSave'); }
+    if (diff) { await page.click('#aDiffToggle'); if (await page.isVisible('#aOk')) throw new Error('수량 다름을 누르면 일치 버튼이 숨어야 함'); await page.fill('#aCountIn', String(n)); if (memo) await page.fill('#aMemoIn', memo); await page.click('#aDiffSave'); }
     else await page.click('#aOk');
     await page.waitForTimeout(300);
   }
@@ -263,7 +263,7 @@ function check(name, ok, extra) { results.push((ok ? 'PASS ' : 'FAIL ') + name +
   await page.evaluate(() => localStorage.setItem('inv.autoNext', 'false'));
 
   // ===== 재고조사 종료 → 보고서 → PDF =====
-  await mark('PN10001', true, 5);   // 수량 다름 1, 미확인 1 (PN10002), 일치 1
+  await mark('PN10001', true, 5, '다른 위치(B000101)에서 3개 추가 발견, 입고 처리 누락으로 추정됨. 박스 파손 1건 포함하여 재확인 필요, 담당자 확인 요청드립니다. 메모가 아주 길어도 품번이 잘리면 안 됩니다.');   // 수량 다름 1(긴 메모), 미확인 1 (PN10002), 일치 1
   const finBtn = await page.$('#auditFinish');
   check('진행 중 조사에 "조사 종료" 버튼', !!finBtn);
   await page.click('#auditFinish');
@@ -278,8 +278,13 @@ function check(name, ok, extra) { results.push((ok ? 'PASS ' : 'FAIL ') + name +
   await page.waitForSelector('#reportView');
   check('종료하면 서버에 종료 기록', !!audit.finished_at);
   const rv = await page.textContent('#rvPages');
-  check('보고서에 현장 확인 점검', rv.includes('현장 확인 점검') && rv.includes('위치 스캔'), rv.slice(rv.indexOf('현장 확인'), rv.indexOf('현장 확인') + 200));
-  check('보고서에 요약·수량 다름·미확인', rv.includes('주간 재고조사 보고서') && rv.includes('PN10001') && rv.includes('+3') && rv.includes('PN10002') && rv.includes('미확인 1건'), '');
+  check('보고서에 현장 확인 점검 표는 없음, 확인 내역에 걸린시간 칸', !rv.includes('현장 확인 점검') && rv.includes('확인 내역') && rv.includes('걸린시간') && /\d\d:\d\d:\d\d/.test(rv) && !/\d\d-\d\d \d\d:\d\d:\d\d/.test(rv), '');
+  check('보고서에 요약·수량 다름·미확인', rv.includes('주간 재고조사 보고서') && rv.includes('PN10001') && rv.includes('+3') && rv.includes('PN10002') && rv.includes('미확인1건'), '');
+  check('보고서 품번·위치 칸은 한 줄 (글이 길어도 안 잘림·안 내려감)', await page.$$eval('#rvPages .rp-list td.k', els => els.length > 0 && els.every(e => e.getBoundingClientRect().height < 26 && e.scrollWidth <= e.clientWidth + 1)));
+  check('수량 다름 메모는 품목 줄 아래 한 줄 전체로', await page.$$eval('#rvPages tr.mm td', els => els.length > 0 && els.every(e => e.colSpan === 8)));
+  check('수량 다름 메모는 "메모" 표식이 붙은 상자', await page.$$eval('#rvPages tr.mm td div', els => els.length > 0 && els.every(e => e.querySelector('b') && e.textContent.startsWith('메모') && getComputedStyle(e).backgroundColor !== 'rgba(0, 0, 0, 0)')));
+  check('보고서에 작업자별 확인 (이름·건수·비율)', rv.includes('작업자별 확인') && /시험\s*\d+건/.test(rv) && rv.includes('%'), rv.slice(rv.indexOf('작업자별'), rv.indexOf('작업자별') + 120));
+  check('확인 내역은 줄 높이가 모두 같음 (글이 길어도 한 줄)', await page.$$eval('#rvPages .rp-list.sm tbody tr', els => els.length > 0 && Math.max(...els.map(e => e.getBoundingClientRect().height)) - Math.min(...els.map(e => e.getBoundingClientRect().height)) < 1));
   const nm = await page.inputValue('#rvName');
   check('파일 이름', nm === '260928-1003 주간 재고조사 보고서', nm);
   await page.waitForFunction(() => document.getElementById('rvState').textContent.includes('PDF 준비됨'), null, { timeout: 30000 }).catch(() => {});
