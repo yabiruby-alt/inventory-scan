@@ -1407,6 +1407,7 @@
           '<div class="ai-v">' + qtyNum(itemTotal(it)) + '<small>EA</small></div></div>' +
         '<div id="aNow" data-pn="' + esc(pn) + '">' + (sync ? auditNowHtml(it, sync.bmw, sync.lct, '최근 DMS', basis() + ' 기준')
           : '<div class="ai-row"><div class="ai-l">지금 DMS<small>' + sinceLabel() + ' 출고·입고 확인</small></div><button class="ai-link" id="aNowBtn">조회</button></div>') + '</div>' +
+        '<div id="aMove" data-pn="' + esc(pn) + '">' + auditMoveHtml(pn) + '</div>' +
       '</div>' +
       (itemRrKnown(it) ? '' : '<p class="ai-foot warn-text">RR 재고가 아직 올라오지 않아 BMW 수량만 들어 있습니다</p>') +
       (done || !locked ? '<div class="ai-status">' + done + (locked ? '' : '<span class="proof-line">' + proofLabel(proof) + '</span>') + '</div>' : '') +
@@ -1427,6 +1428,16 @@
     );
     // 창을 열면 이 부품만 DMS 실시간 조회 (실패하면 조용히 최근 DMS 값 그대로)
     if ($("aNowBtn") && !(curA && curA.finished_at) && liveOk(pn)) auditNow($("aNowBtn"), true);
+  }
+  // 재고 확인 창의 위치 변경 줄: 다른 곳에서 발견한 부품을 조사 중에 바로 옮김 (DMS 현재고에 있는 부품만)
+  //   조사 목록의 위치(조사 시작 때 기준)는 그대로 두고, 옮긴 위치는 이 줄과 '지금 DMS' 줄에 보여 줌
+  function auditMoveHtml(pn) {
+    var p = state.parts[pn], m = state.moves[pn];
+    if (!p) return '<div class="ai-row"><div class="ai-l">위치 변경<small>DMS 현재고에 없는 부품이라 바꿀 수 없습니다</small></div></div>';
+    if (m && m.status === "pending") return '<div class="ai-row"><div class="ai-l">위치 변경<small>DMS 반영 중 · ' + esc(m.from || "없음") + ' → ' + esc(m.to) + '</small></div><span class="spin" aria-hidden="true"></span></div>';
+    if (m && m.status === "done") return '<div class="ai-row"><div class="ai-l">위치 변경<small>' + esc(m.from || "없음") + ' → ' + esc(m.to) + ' 변경함 · ' + esc(m.time || "") + '</small></div><button class="ai-link" data-amove="' + esc(pn) + '">다시 변경</button></div>';
+    if (m && m.status === "failed") return '<div class="ai-row"><div class="ai-l">위치 변경<small class="warn-text">실패 · ' + esc(m.error || "") + '</small></div><button class="ai-link" data-amove="' + esc(pn) + '">다시</button></div>';
+    return '<div class="ai-row"><div class="ai-l">위치 변경<small>다른 곳에서 발견했다면 바로 옮길 수 있습니다</small></div><button class="ai-link" data-amove="' + esc(pn) + '">변경</button></div>';
   }
   function showDiffBox() {
     $("aDiffBox").hidden = false; document.querySelector(".ai-actions").hidden = true; $("aDiffSave").hidden = false;
@@ -2084,7 +2095,7 @@
     var a = document.activeElement;
     if (a && $("sheet").contains(a)) a.blur();
     $("sheet").hidden = true; $("backdrop").hidden = true;
-    sheetExempt = {};
+    sheetExempt = {}; moveFromAudit = null;
     if (exitOpen) { exitOpen = false; armBack(); }
   }
   $("backdrop").addEventListener("click", closeSheet);
@@ -2228,10 +2239,14 @@
     h.textContent = d === 0 ? base + "과 같아서 체크할 내용이 없습니다." : base + "보다 " + Math.abs(qtyNum(d)) + "개 " + (d > 0 ? "많습니다." : "적습니다.");
   }
 
-  function openMove(pn) {
+  // fromAudit: 재고조사 중 재고 확인 창에서 연 경우 — 취소·저장하면 그 재고 확인 창으로 돌아감
+  var moveFromAudit = null;
+  function openMove(pn, fromAudit) {
     var p = state.parts[pn];
+    if (!p) { toast("DMS 현재고에 없는 부품이라 위치를 바꿀 수 없습니다"); return; }
+    moveFromAudit = fromAudit ? pn : null;
     openSheet(
-      '<div class="sheet-head"><button class="cancel" data-close>취소</button><h2>위치 변경</h2><span></span></div>' +
+      '<div class="sheet-head">' + (fromAudit ? '<button class="cancel" id="moveBack" data-pn="' + esc(pn) + '">취소</button>' : '<button class="cancel" data-close>취소</button>') + '<h2>위치 변경</h2><span></span></div>' +
       '<p class="sheet-sub"><span class="pn">' + esc(pn) + '</span> · ' + esc(p.item_nm) + '</p>' +
       '<div class="group">' +
         '<div class="row"><div class="row-main">현재 위치</div><span class="row-value mono-loc">' + esc(p.lct_cd || "없음") + '</span></div>' +
@@ -2292,6 +2307,8 @@
     if (el.hasAttribute("data-spot")) { spotOk(el.getAttribute("data-spot"), el); return; }
     if (el.hasAttribute("data-check")) { openCheck(el.getAttribute("data-check")); return; }
     if (el.hasAttribute("data-move")) { openMove(el.getAttribute("data-move")); return; }
+    if (el.hasAttribute("data-amove")) { openMove(el.getAttribute("data-amove"), true); return; }
+    if (el.id === "moveBack") { openAuditItem(el.getAttribute("data-pn")); return; }
     if (el.hasAttribute("data-rdc-retry")) { var rp = el.getAttribute("data-rdc-retry"); delete state.rdc[rp]; requestRdc(rp); $("rdcTile").innerHTML = rdcTile(rp); return; }
     if (el.hasAttribute("data-refresh")) { refreshPart(el.getAttribute("data-refresh")); return; }
     if (el.hasAttribute("data-step")) {
@@ -2428,12 +2445,14 @@
   }
 
   async function saveMove(pn) {
-    var to = normCode($("newLoc").value), from = state.parts[pn].lct_cd || "";
+    var to = normCode($("newLoc").value), from = state.parts[pn].lct_cd || "", back = moveFromAudit === pn;
     $("saveMove").disabled = true;
     try {
       var id = await sendRequest("loc_change", pn, { from: from, to: to });
       state.moves[pn] = { from: from, to: to, status: "pending", reqId: id, at: Date.now() };
-      closeSheet(); if (nextScan()) toast("위치 변경을 요청했습니다 · " + pn + " → " + to); else render(false);
+      // 재고조사 중이면 닫지 않고 재고 확인 창으로 돌아감 (예외 사유 등 창 상태 유지)
+      if (back) { moveFromAudit = null; openAuditItem(pn); toast("위치 변경을 요청했습니다 · " + pn + " → " + to); }
+      else { closeSheet(); if (nextScan()) toast("위치 변경을 요청했습니다 · " + pn + " → " + to); else render(false); }
       waitRequest(id, function (res) {
         if (res.status === "done") {
           state.moves[pn] = { from: from, to: to, status: "done", time: hhmm(), at: Date.now() };
@@ -2444,6 +2463,8 @@
           state.moves[pn] = { from: from, to: to, status: "failed", error: res.error, at: Date.now() };
         }
         if (state.tab === "scan" && $("sheet").hidden) render(false); else renderMoveBar();
+        var am = $("aMove");   // 재고 확인 창이 이 부품으로 열려 있으면 위치 변경 줄도 새로 그림
+        if (am && am.getAttribute("data-pn") === pn) am.innerHTML = auditMoveHtml(pn);
       });
     } catch (e) {
       if ($("saveMove")) $("saveMove").disabled = false;

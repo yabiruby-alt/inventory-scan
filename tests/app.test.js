@@ -20,7 +20,7 @@ const PORT = 8123;
 
 const server = http.createServer((req, res) => {
   let f = path.join(ROOT, decodeURIComponent(req.url.split('?')[0]));
-  if (f.endsWith('/')) f += 'index.html';
+  if (f.endsWith('/') || f.endsWith(path.sep)) f = path.join(f, 'index.html');   // 윈도에서는 경로 구분자가 \
   fs.readFile(f, (e, d) => { if (e) { res.writeHead(404); res.end(); return; } res.writeHead(200, { 'content-type': f.endsWith('.js') ? 'text/javascript' : f.endsWith('.css') ? 'text/css' : 'text/html' }); res.end(d); });
 });
 
@@ -499,6 +499,24 @@ function check(name, ok, extra) { results.push((ok ? 'PASS ' : 'FAIL ') + name +
   check('목록에 조사 시작 뒤 변동 표시', mvList.includes('조사 시작 뒤 −2 (지금 1)'), mvList);
   check('현재고 조회는 RDC 없이 (빠르게)', !reqPosts.some(r => r.kind === 'stock' && r.item_cd === 'PN10002' && r.params && r.params.rdc));
   check('RR 이 없는 부품도 확인 창에 RR 0 표시', qs0 === 'BMW 3 · RR 0' && !(await page.textContent('#sheet')).includes('아직 올라오지 않아'), qs0);
+  // ===== 재고조사 중 위치 변경: 재고 확인 창 → 위치 변경 창 → 다시 재고 확인 창 =====
+  check('확인 창에 위치 변경 줄 (변경 버튼)', await page.isVisible('#aMove [data-amove="PN10002"]') && (await page.textContent('#aMove')).includes('위치 변경'));
+  await page.click('[data-amove="PN10002"]');
+  check('변경 버튼 → 위치 변경 창 (현재 위치 표시)', await page.isVisible('#newLoc') && (await page.textContent('#sheet')).includes('B000001') && await page.isVisible('#moveBack'));   // 앞에서 지금 DMS 조회로 위치가 B000001 로 갱신됨
+  check('새 위치 비면 저장 못 함', await page.isDisabled('#saveMove'));
+  await page.click('#moveBack');
+  check('취소 → 재고 확인 창으로 돌아옴 (위치 변경 안 보냄)', await page.isVisible('#aOk') && await page.isVisible('#aMove') && !reqPosts.some(r => r.kind === 'loc_change'));
+  await page.click('[data-amove="PN10002"]');
+  await scan('C000009');   // 새 위치 라벨 스캔 → 칸에 들어감 (재고 확인 창은 잠기지 않았으니 스캔이 위치 변경 칸으로)
+  check('위치 라벨을 스캔하면 새 위치 칸에 들어감', (await page.inputValue('#newLoc')) === 'C000009' && await page.isEnabled('#saveMove'), await page.inputValue('#newLoc'));
+  await page.click('#saveMove');
+  await page.waitForFunction(() => { const e = document.querySelector('#aMove'); return e && e.textContent.includes('변경함'); }, null, { timeout: 5000 });
+  const lc = reqPosts.filter(r => r.kind === 'loc_change').pop();
+  check('위치 변경 요청 (loc_change, 옛 위치 → 새 위치)', lc && lc.item_cd === 'PN10002' && lc.params.from === 'B000001' && lc.params.to === 'C000009', JSON.stringify(lc));
+  check('저장하면 재고 확인 창으로 돌아옴 (닫히지 않음, 그대로 확인 가능)', await page.isVisible('#aOk') && await page.isVisible('#sheet'));
+  check('위치 변경 줄이 "옛 → 새 변경함"으로 바뀜', (await page.textContent('#aMove')).includes('B000001 → C000009 변경함') && await page.isVisible('[data-amove="PN10002"]'), await page.textContent('#aMove'));
+  check('위치를 바꿔도 조사 항목은 확인 안 됨', auditItems.find(x => x.item_cd === 'PN10002').status === null);
+  check('확인 창의 조사 목록 위치는 조사 시작 때 그대로', (await page.textContent('#sheet .ai-loc')).includes('B000001'));
   await page.click('[data-close]');
   await page.click('[data-tab="log"]');
   const lg = await page.textContent('#view');

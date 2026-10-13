@@ -408,6 +408,7 @@ button.row:active, .row-btn:active { background: var(--fill); }
 .ai-refresh { flex: none; width: 32px; height: 32px; margin-right: -6px; border-radius: 50%; display: grid; place-items: center; color: var(--accent); }
 .ai-refresh svg { width: 17px; height: 17px; }
 .ai-refresh:active { background: var(--fill); }
+.ai-card > #aNow + #aMove > .ai-row { border-top: 0.5px solid var(--sep); }
 .ai-moved { min-height: 44px; padding-block: 8px; font-size: var(--fs-sm); color: var(--warn); justify-content: space-between; }
 .ai-moved.ok { color: var(--ok); }
 .ai-moved span { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: inline-flex; align-items: center; gap: 4px; }
