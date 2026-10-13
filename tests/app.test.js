@@ -282,6 +282,7 @@ function check(name, ok, extra) { results.push((ok ? 'PASS ' : 'FAIL ') + name +
   check('보고서에 요약·수량 다름·미확인', rv.includes('주간 재고조사 보고서') && rv.includes('PN10001') && rv.includes('+3') && rv.includes('PN10002') && rv.includes('미확인1건'), '');
   check('보고서 품번·위치 칸은 한 줄 (글이 길어도 안 잘림·안 내려감)', await page.$$eval('#rvPages .rp-list td.k', els => els.length > 0 && els.every(e => e.getBoundingClientRect().height < 26 && e.scrollWidth <= e.clientWidth + 1)));
   check('수량 다름 메모는 품목 줄 아래 한 줄 전체로', await page.$$eval('#rvPages tr.mm td', els => els.length > 0 && els.every(e => e.colSpan === 8)));
+  check('보고서 쪽 끝에 제목만 남지 않음', await page.$$eval('#rvPages .rp-page', ps => ps.every(p => { const f = p.querySelector('.rp-foot'); const prev = f && f.previousElementSibling; return !prev || !prev.classList.contains('rp-h'); })));
   check('수량 다름 메모는 "메모" 표식이 붙은 상자', await page.$$eval('#rvPages tr.mm td div', els => els.length > 0 && els.every(e => e.querySelector('b') && e.textContent.startsWith('메모') && getComputedStyle(e).backgroundColor !== 'rgba(0, 0, 0, 0)')));
   check('보고서에 작업자별 확인 (이름·건수·비율)', rv.includes('작업자별 확인') && /시험\s*\d+건/.test(rv) && rv.includes('%'), rv.slice(rv.indexOf('작업자별'), rv.indexOf('작업자별') + 120));
   check('확인 내역은 줄 높이가 모두 같음 (글이 길어도 한 줄)', await page.$$eval('#rvPages .rp-list.sm tbody tr', els => els.length > 0 && Math.max(...els.map(e => e.getBoundingClientRect().height)) - Math.min(...els.map(e => e.getBoundingClientRect().height)) < 1));

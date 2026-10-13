@@ -31,7 +31,7 @@
   // ============================================================
   var CSS = [
     // 종이: 먹색 글자, 가는 선, 얇은 회색만 씀 (색 면·둥근 상자 없음)
-    ".rp-page{box-sizing:border-box;position:relative;width:210mm;height:297mm;padding:14mm 14mm 20mm;background:#fff;color:#1b1f2a;overflow:hidden;color-scheme:only light;forced-color-adjust:none;",
+    ".rp-page{box-sizing:border-box;position:relative;width:210mm;height:297mm;padding:14mm 14mm 16mm;background:#fff;color:#1b1f2a;overflow:hidden;color-scheme:only light;forced-color-adjust:none;",
     "font-family:-apple-system,'Noto Sans KR','Noto Sans CJK KR','Apple SD Gothic Neo','Malgun Gothic',sans-serif;font-size:8.5pt;line-height:1.4}",
     ".rp-page *{box-sizing:border-box}",
     ".rp-foot{position:absolute;left:14mm;right:14mm;bottom:8mm;display:flex;justify-content:space-between;padding-top:1.6mm;border-top:.5px solid #c9ccd2;font-size:7pt;color:#8a8f98;line-height:1;letter-spacing:.02em}",
@@ -44,28 +44,28 @@
     ".rp-sign div{width:19mm;border:.5px solid #9aa0aa;text-align:center}",
     ".rp-sign div+div{border-left:0}",
     ".rp-sign span{display:block;padding:1.2mm 0;font-size:7.5pt;color:#6b7280;letter-spacing:.2em;border-bottom:.5px solid #9aa0aa}",
-    ".rp-sign i{display:block;height:13mm}",
+    ".rp-sign i{display:block;height:11.5mm}",
     ".rp-rule{height:1mm;border-top:1.6px solid #1b1f2a;border-bottom:.5px solid #1b1f2a;margin:0 0 3.5mm}",
     // 일시: 이름표를 위에 작게, 값은 아래에
-    ".rp-meta{display:flex;margin:0 0 5mm}",
+    ".rp-meta{display:flex;margin:0 0 4mm}",
     ".rp-meta div{flex:1}",
     ".rp-meta span{display:block;font-size:7.5pt;color:#8a8f98;letter-spacing:.06em;margin:0 0 .8mm}",
     ".rp-meta b{font-weight:500;font-size:9pt;font-variant-numeric:tabular-nums}",
     // 요약: 큰 숫자 네 개를 가는 세로선으로 나눔
     ".rp-sum{display:flex;border-top:.5px solid #c9ccd2;border-bottom:.5px solid #c9ccd2;margin:0 0 2mm}",
-    ".rp-sum div{flex:1;text-align:center;padding:3.4mm 0 3mm}",
+    ".rp-sum div{flex:1;text-align:center;padding:3mm 0 2.6mm}",
     ".rp-sum div+div{border-left:.5px solid #c9ccd2}",
     ".rp-sum b{display:block;font-size:19pt;font-weight:600;line-height:1.1;font-variant-numeric:tabular-nums}",
     ".rp-sum span{display:block;margin-top:1mm;font-size:7.5pt;color:#6b7280;letter-spacing:.12em}",
     ".rp-sum .w b{color:#8c2f39}",
     // 구역 제목
-    ".rp-h{display:flex;align-items:baseline;gap:2mm;margin:7mm 0 0;padding:0 0 1.6mm;border-bottom:1px solid #1b1f2a;font-size:10.5pt;font-weight:700;letter-spacing:.03em}",
+    ".rp-h{display:flex;align-items:baseline;gap:2mm;margin:5mm 0 0;padding:0 0 1.3mm;border-bottom:1px solid #1b1f2a;font-size:10.5pt;font-weight:700;letter-spacing:.03em}",
     ".rp-h em{font-style:normal;font-weight:500;font-size:8.5pt;color:#6b7280;letter-spacing:0}",
-    ".rp-note{color:#8a8f98;font-size:7.5pt;margin:1.6mm 0 0}",
+    ".rp-hn{margin-left:auto;font-size:7pt;font-weight:400;color:#8a8f98;letter-spacing:0}",
     // 표: 세로선 없이 가는 가로선, 머리글은 작게 가운데
     ".rp-list{width:100%;border-collapse:collapse;table-layout:fixed;margin:0 0 1mm}",
-    ".rp-list th{padding:2.2mm 1.2mm 1.6mm;border-bottom:.5px solid #9aa0aa;font-size:7.5pt;font-weight:600;color:#6b7280;letter-spacing:.06em;text-align:center;white-space:nowrap}",
-    ".rp-list td{padding:1.9mm 1.2mm;text-align:center;vertical-align:middle;border-bottom:.5px solid #e3e5e9;overflow-wrap:anywhere;word-break:keep-all}",
+    ".rp-list th{padding:1.8mm 1.2mm 1.4mm;border-bottom:.5px solid #9aa0aa;font-size:7.5pt;font-weight:600;color:#6b7280;letter-spacing:.06em;text-align:center;white-space:nowrap}",
+    ".rp-list td{padding:1.45mm 1.2mm;text-align:center;vertical-align:middle;border-bottom:.5px solid #e3e5e9;overflow-wrap:anywhere;word-break:keep-all}",
     ".rp-list td.k{white-space:nowrap;overflow-wrap:normal;word-break:normal}",
     ".rp-list .m{font-family:'SF Mono',ui-monospace,Menlo,Consolas,'Roboto Mono',monospace;font-size:.94em;letter-spacing:-.01em}",
     ".rp-list .n{font-variant-numeric:tabular-nums}",
@@ -81,7 +81,7 @@
     ".rp-list tbody.g tr.sp td{height:2.6mm;padding:0}",
     ".rp-list.sm{font-size:7.5pt}",
     ".rp-list.sm th{font-size:7pt}",
-    ".rp-list.sm td{padding:1.5mm .8mm;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;overflow-wrap:normal;word-break:normal}",
+    ".rp-list.sm td{padding:1.4mm .8mm;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;overflow-wrap:normal;word-break:normal}",
     ".rp-list td.e{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;overflow-wrap:normal;word-break:normal}",
     ".rp-list.wk td.l{text-align:left;padding-left:3mm}",
     ".rp-list.wk td.bar{text-align:left;white-space:nowrap}",
@@ -89,8 +89,8 @@
     ".rp-bar i{display:block;height:100%;background:#1b1f2a}",
     ".rp-pct{display:inline-block;width:9mm;text-align:right;margin-left:2mm;font-variant-numeric:tabular-nums;color:#4b5160}",
     ".rp-list tr.tot td{font-weight:700;border-bottom:0;border-top:.5px solid #9aa0aa}",
-    ".rp-ex{margin:2mm 0 0;color:#4b5160;font-size:7.5pt;line-height:1.6}",
-    ".rp-ex b{color:#1b1f2a;margin-right:2mm}",
+    ".rp-list.ex{font-size:8pt}",
+    ".rp-list.ex td.l,.rp-list.ex th:last-child{text-align:left;padding-left:3mm}",
     ".rp-list .t{white-space:nowrap;font-variant-numeric:tabular-nums;overflow-wrap:normal}",
     ".rp-none{color:#6b7280;padding:4.5mm 0;text-align:center;border-bottom:.5px solid #e3e5e9}"
   ].join("");
@@ -147,7 +147,7 @@
     });
     var wl = Object.keys(wk).map(function (k) { return wk[k]; }).sort(function (x, y) { return y.c - x.c || x.n.localeCompare(y.n); });
     if (wl.length) {
-      out.push({ html: '<h2 class="rp-h">작업자별 확인<em>' + wl.length + '명</em></h2>' });
+      out.push({ keep: true, html: '<h2 class="rp-h">작업자별 확인<em>' + wl.length + '명</em></h2>' });
       out.push({ table: {
         cls: "wk",
         head: '<colgroup><col style="width:34mm"><col style="width:20mm"><col style="width:20mm"><col style="width:22mm"><col><col style="width:34mm"></colgroup>' +
@@ -161,7 +161,7 @@
       } });
     }
 
-    out.push({ html: '<h2 class="rp-h">수량 다름<em>' + d.diffItems.length + '건</em></h2>' });
+    out.push({ keep: true, html: '<h2 class="rp-h">수량 다름<em>' + d.diffItems.length + '건</em></h2>' });
     if (d.diffItems.length) {
       out.push({ table: {
         head: '<colgroup><col style="width:19mm"><col style="width:29mm"><col><col style="width:12mm"><col style="width:12mm"><col style="width:13mm"><col style="width:13mm"><col style="width:17mm"></colgroup>' +
@@ -177,7 +177,7 @@
       } });
     } else out.push({ html: '<div class="rp-none">수량이 다른 부품이 없습니다</div>' });
 
-    out.push({ html: '<h2 class="rp-h">미확인<em>' + d.leftItems.length + '건</em></h2>' });
+    out.push({ keep: true, html: '<h2 class="rp-h">미확인<em>' + d.leftItems.length + '건</em></h2>' });
     if (d.leftItems.length) {
       out.push({ table: {
         head: '<colgroup><col style="width:23mm"><col style="width:34mm"><col><col style="width:15mm"><col style="width:15mm"><col style="width:15mm"></colgroup>' +
@@ -191,7 +191,7 @@
     // 확인 내역: 확인한 부품 전부(일치 포함) — 어떤 방식으로 언제 스캔하고 누가 확인했는지, 스캔에서 확인까지 걸린 시간
     // 줄 높이가 들쭉날쭉하지 않게 모든 칸을 한 줄로 두고(넘치면 …), 길어지는 예외 사유는 표 아래에 따로 적는다
     if (dn.length) {
-      out.push({ html: '<h2 class="rp-h">확인 내역<em>' + dn.length + '건</em></h2><p class="rp-note">스캔 = 위치나 부품 바코드를 찍은 시각 · 확인 = 일치·수량 다름을 누른 시각 · 걸린시간 = 스캔부터 확인까지</p>' });
+      out.push({ keep: true, html: '<h2 class="rp-h">확인 내역<em>' + dn.length + '건</em><span class="rp-hn">스캔 = 위치·부품 바코드를 찍은 시각 · 확인 = 일치/수량 다름을 누른 시각 · 걸린시간 = 스캔부터 확인까지</span></h2>' });
       out.push({ table: {
         cls: "sm",
         head: '<colgroup><col style="width:16mm"><col style="width:23mm"><col><col style="width:10mm"><col style="width:14mm"><col style="width:19mm"><col style="width:15mm"><col style="width:15mm"><col style="width:16mm"><col style="width:15mm"></colgroup>' +
@@ -203,8 +203,19 @@
             '<td>' + esc(it.via) + '</td><td class="t">' + hms(it.scanned_at) + '</td><td class="t">' + hms(it.marked_at) + '</td><td class="t">' + elapsed(it.scanned_at, it.marked_at) + '</td><td>' + esc(it.by || "") + '</td></tr>';
         })
       } });
+      // 예외로 확인한 건은 사유를 따로 표로 (확인 내역 표는 한 줄로 두기 위해)
       var ex = dn.filter(function (it) { return it.reason; });
-      if (ex.length) out.push({ html: '<p class="rp-ex"><b>예외 확인 ' + ex.length + '건 사유</b>' + ex.map(function (it) { return esc(it.item_cd) + ' ' + esc(it.reason); }).join(' · ') + '</p>' });
+      if (ex.length) {
+        out.push({ keep: true, html: '<h2 class="rp-h">예외 확인<em>' + ex.length + '건</em><span class="rp-hn">위치·부품 바코드를 스캔하지 못해 사유를 적고 확인한 부품</span></h2>' });
+        out.push({ table: {
+          cls: "ex",
+          head: '<colgroup><col style="width:19mm"><col style="width:28mm"><col style="width:46mm"><col style="width:18mm"><col></colgroup>' +
+            '<thead><tr><th>위치</th><th>품번</th><th>품명</th><th>작업자</th><th>사유</th></tr></thead>',
+          rows: ex.map(function (it) {
+            return '<tr><td class="m k">' + esc(it.lct_cd || "-") + '</td><td class="m k">' + esc(it.item_cd) + '</td><td class="e">' + esc(it.item_nm) + '</td><td>' + esc(it.by || "") + '</td><td class="l">' + esc(it.reason) + '</td></tr>';
+          })
+        } });
+      }
     }
 
     return out;
@@ -224,12 +235,12 @@
   /** 블록들을 쪽(HTML 문자열 배열)으로 나눈다 */
   function paginate(list) {
     ensureStyle();
-    var contentH = (PAGE.h - PAGE.margin - 20) * PX_PER_MM;   // .rp-page 위 여백 14mm, 아래 20mm(쪽 아래 문구 자리 포함)
+    var contentH = (PAGE.h - PAGE.margin - 16) * PX_PER_MM;   // .rp-page 위 여백 14mm, 아래 16mm(쪽 아래 문구 자리 포함)
     var probe = document.createElement("div");
     probe.className = "rp-page";
     Object.assign(probe.style, { position: "fixed", left: "-20000px", top: "0", height: "auto", overflow: "visible" });
     document.body.appendChild(probe);
-    var pages = [], cur = "", used = 0;
+    var pages = [], cur = "", used = 0, held = null;   // held: 다음 블록과 같은 쪽에 놓아야 하는 제목
     var flush = function () { if (cur) pages.push(cur); cur = ""; used = 0; };
     // 블록 하나를 단독으로 그렸을 때 차지하는 높이 (바깥 여백 포함: 위아래에 기준 선을 두고 잰다)
     var measure = function (html) {
@@ -238,10 +249,14 @@
       return k[k.length - 1].getBoundingClientRect().top - k[0].getBoundingClientRect().bottom;
     };
     try {
+      var takeHeld = function () { if (held) { cur += held.html; used += held.h; held = null; } };
       list.forEach(function (b) {
+        if (b.keep) { held = { html: b.html, h: measure(b.html) }; return; }
+        var lead = held ? held.h : 0;
         if (!b.table) {
           var h = measure(b.html);
-          if (used + h > contentH && cur) flush();
+          if (used + lead + h > contentH && cur) flush();
+          takeHeld();
           cur += b.html; used += h;
           return;
         }
@@ -254,14 +269,24 @@
         var rowH = [].map.call(grouped ? t.tBodies : t.tBodies[0].rows, function (r) { return r.getBoundingClientRect().height; });
         var seg = [];
         var close = function () { if (seg.length) cur += '<table class="' + tcls + '">' + b.table.head + wrap(seg) + '</table>'; seg = []; };
-        if (cur && used + headH + (rowH[0] || 0) > contentH) flush();
+        // 작은 표(약 70mm 이하)는 쪼개지 않고 통째로 한 쪽에, 긴 표는 머리글 + 2줄이 들어갈 때 이 쪽에서 시작
+        var total = rowH.reduce(function (a, x) { return a + x; }, headH);
+        var need = total <= 70 * PX_PER_MM ? total : headH + (rowH[0] || 0) + (rowH[1] || 0);
+        if (cur && used + lead + need > contentH) flush();
+        takeHeld();
         used += headH;
         b.table.rows.forEach(function (r, i) {
-          if (used + rowH[i] > contentH && seg.length) { close(); flush(); used = headH; }   // 다음 쪽에서 머리글 반복
+          if (used + rowH[i] > contentH && seg.length) {
+            // 마지막 한 줄만 넘어가면 앞 줄 하나를 같이 넘겨 한 줄짜리 쪽이 생기지 않게 함
+            var carry = (i === b.table.rows.length - 1 && seg.length >= 3) ? seg.pop() : null;
+            close(); flush(); used = headH;   // 다음 쪽에서 머리글 반복
+            if (carry) { seg.push(carry); used += rowH[i - 1]; }
+          }
           seg.push(r); used += rowH[i];
         });
         close();
       });
+      takeHeld();
       flush();
     } finally {
       probe.remove();
