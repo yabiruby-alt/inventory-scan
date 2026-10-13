@@ -135,6 +135,7 @@
    * d: {title, branch, period, started_at, started_by, finished_at, finished_by, printed_at,
    *     total, ok, diff, left, diffItems[{lct_cd,item_cd,item_nm,qty,rr,counted,by,memo}], leftItems[{lct_cd,item_cd,item_nm,qty,rr}],
    *     doneItems[{lct_cd,item_cd,item_nm,qty,rr,counted,status,via,scanned_at,marked_at,opened_at,by}] (확인한 부품 전부, opened_at = 확인 창을 연 시각),
+   *     moveItems[{at,item_cd,item_nm,from,to,by,status}] (조사 중 위치 변경), recheckItems[{lct_cd,item_cd,item_nm,prev_at,prev_kind,prev_counted,prev_qty,now,now_counted}] (지난 수량 다름 재확인),
    *     removedItems[{lct_cd,item_cd,item_nm,qty,rr,at,by}] (DMS 갱신 때 재고 0으로 뺀 부품)}
    *   qty = BMW(DMS) 수량, rr = RR 수량. 차이 = 실사 - (BMW + RR)
    */
@@ -200,6 +201,38 @@
         })
       } });
     } else out.push({ html: '<div class="rp-none">모두 확인했습니다</div>' });
+
+    // 조사 중 위치 변경: 조사 목록의 위치는 시작 때 기준이라, 조사하는 동안 옮긴 부품은 여기서 확인
+    var mv = d.moveItems || [];
+    if (mv.length) {
+      out.push({ keep: true, html: '<h2 class="rp-h">조사 중 위치 변경<em>' + mv.length + '건</em><span class="rp-hn">조사 목록의 위치는 시작 때 기준 · 옮긴 부품은 이 표 참고</span></h2>' });
+      out.push({ table: {
+        cls: "sm",
+        head: '<colgroup><col style="width:16mm"><col style="width:26mm"><col><col style="width:20mm"><col style="width:20mm"><col style="width:18mm"><col style="width:15mm"></colgroup>' +
+          '<thead><tr><th>시각</th><th>품번</th><th>품명</th><th>이전 위치</th><th>새 위치</th><th>요청자</th><th>결과</th></tr></thead>',
+        rows: mv.map(function (m) {
+          return '<tr><td class="t">' + hm(m.at) + '</td><td class="m k">' + esc(m.item_cd) + '</td><td>' + esc(m.item_nm) + '</td><td class="m k">' + esc(m.from || "-") + '</td><td class="m k">' + esc(m.to || "-") + '</td><td>' + esc(m.by || "") + '</td>' +
+            '<td' + (m.status === "done" ? '>완료' : ' class="neg">실패') + '</td></tr>';
+        })
+      } });
+    }
+
+    // 지난 수량 다름 재확인: 지난 조사에서 수량이 달랐던 부품이 이번에는 어떻게 됐는지
+    var rc = d.recheckItems || [], KIND = { daily: "일일", aging: "일일장기", weekly: "주간" };
+    if (rc.length) {
+      var rcOk = rc.filter(function (r) { return r.now === "ok"; }).length, rcShow = rc.slice(0, 60);
+      out.push({ keep: true, html: '<h2 class="rp-h">지난 수량 다름 재확인<em>' + rc.length + '건</em><span class="rp-hn">지난 조사에서 수량이 달랐던 부품의 이번 결과 · 일치 ' + rcOk + '건' + (rc.length > rcShow.length ? ' · 앞 ' + rcShow.length + '건만 표시' : '') + '</span></h2>' });
+      out.push({ table: {
+        cls: "sm",
+        head: '<colgroup><col style="width:17mm"><col style="width:26mm"><col><col style="width:50mm"><col style="width:22mm"></colgroup>' +
+          '<thead><tr><th>위치</th><th>품번</th><th>품명</th><th>지난 조사</th><th>이번 결과</th></tr></thead>',
+        rows: rcShow.map(function (r) {
+          var pd = new Date(r.prev_at), res = r.now === "ok" ? '>일치' : r.now === "diff" ? ' class="neg">다름 ' + num(r.now_counted) : ' class="neg">미확인';
+          return '<tr><td class="m k">' + esc(r.lct_cd || "-") + '</td><td class="m k">' + esc(r.item_cd) + '</td><td>' + esc(r.item_nm) + '</td>' +
+            '<td>' + (pd.getMonth() + 1) + '/' + pd.getDate() + ' ' + (KIND[r.prev_kind] || "") + ' · 실사 ' + num(r.prev_counted) + ' / DMS ' + num(r.prev_qty) + '</td><td' + res + '</td></tr>';
+        })
+      } });
+    }
 
     // 확인 내역: 확인한 부품 전부(일치 포함) — 어떤 방식으로 언제 스캔하고 누가 확인했는지, 스캔에서 확인까지 걸린 시간
     // 줄 높이가 들쭉날쭉하지 않게 모든 칸을 한 줄로 두고(넘치면 …), 길어지는 예외 사유는 표 아래에 따로 적는다

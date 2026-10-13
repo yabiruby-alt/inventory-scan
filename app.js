@@ -1246,7 +1246,7 @@
         if (cur !== null) html += '</div>';
         cur = loc;
         var locLeft = locLeftN[cur] || 0;
-        html += '<div class="loc-head"><span class="mono-loc">' + esc(cur || "위치 없음") + '</span><span>' + (started ? (locLeft ? locLeft + '건 남음' : '완료') : locN[cur] + '건') + '</span></div><div class="group cv" style="contain-intrinsic-size:auto ' + (listN[cur] * 79) + 'px">';
+        html += '<div class="loc-head"><span class="mono-loc">' + esc(cur || "위치 없음") + '</span>' + (started ? peerLocTag(cur) : '') + '<span>' + (started ? (locLeft ? locLeft + '건 남음' : '완료') : locN[cur] + '건') + '</span></div><div class="group cv" style="contain-intrinsic-size:auto ' + (listN[cur] * 79) + 'px">';
       }
       var mark = (it.pending ? '<span class="pill">전송 대기</span>' : '') +
         (it.status === "ok" ? '<span class="pill ok">일치</span>'
@@ -1298,7 +1298,7 @@
     }
     var st = auditStatsOf(state.auditItems), done = !!a.finished_at;
     return head +
-      '<div class="aprog"><div class="aprog-nums"><b>' + st.done + '</b> / ' + st.total + ' 확인' + (st.diff ? ' · <span class="warn-text">수량 다름 ' + st.diff + '</span>' : '') + '</div>' + progressBar(st) + '</div>' +
+      '<div class="aprog"><div class="aprog-nums"><b>' + st.done + '</b> / ' + st.total + ' 확인' + (st.diff ? ' · <span class="warn-text">수량 다름 ' + st.diff + '</span>' : '') + '</div>' + progressBar(st) + '</div>' + (done ? '' : peerBarHtml()) +
       (!done && state.auditItems.length && !itemRrKnown(state.auditItems[0]) ? '<div class="notice">RR 재고가 아직 올라오지 않아 BMW 수량만으로 비교합니다. DMS 연결 PC(데몬)를 확인하세요.</div>' : '') +
       (done ? '<div class="banner ok">' + hhmm(a.finished_at) + ' ' + esc(a.finished_by_name || "") + ' 종료 · 더 이상 고칠 수 없습니다</div>' +
           '<button class="btn-primary" id="auditReport" style="margin:0 0 8px">보고서 보기 · PDF 저장</button>' +
@@ -1404,6 +1404,7 @@
         '<div class="ai-nm">' + esc(it.item_nm) + '</div>' +
         '<div class="ai-last lastaudit-line" data-last="' + esc(pn) + '" data-skip="' + esc(curA ? curA.id : "") + '">' + lastAuditHtml(pn, curA ? curA.id : null, false) + '</div>' +
       '</div>' +
+      '<div id="aPeer" data-pn="' + esc(pn) + '">' + peerNoteHtml(it) + '</div>' +
       '<div class="group ai-card">' +
         '<div class="ai-row"><div class="ai-l">' + (curA && curA.qty_refreshed_at ? '갱신 수량' : '조사 수량') + '<small class="ai-split">BMW ' + qtyNum(it.qty) + ' · RR ' + (itemRrKnown(it) ? qtyNum(itemRr(it)) : "-") + '</small></div>' +
           '<div class="ai-v">' + qtyNum(itemTotal(it)) + '<small>EA</small></div></div>' +
@@ -1428,6 +1429,7 @@
         '<button class="btn-primary" id="aDiffSave" data-pn="' + esc(pn) + '" hidden>수량 다름으로 저장</button>' +
       '</div>'
     );
+    trackPresence();
     // 창을 열면 이 부품만 DMS 실시간 조회 (실패하면 조용히 최근 DMS 값 그대로)
     if ($("aNowBtn") && !(curA && curA.finished_at) && liveOk(pn)) auditNow($("aNowBtn"), true);
   }
@@ -1698,7 +1700,8 @@
   var VIA_LABEL = { scanner: "위치 스캔", camera: "카메라 스캔", part: "부품 스캔", exempt: "예외" };
 
   var REPORT_TITLE = { daily: "일일 재고조사 보고서", aging: "일일장기 재고조사 보고서", weekly: "주간 재고조사 보고서" };
-  function reportData(a, items) {
+  function reportData(a, items, extra) {
+    extra = extra || {};
     var diff = items.filter(function (it) { return it.status === "diff"; }), left = items.filter(function (it) { return !it.status; });
     return {
       title: REPORT_TITLE[a.kind], branch: state.user.branch + " 부품창고", period: periodLabel(a.kind, a),
@@ -1714,6 +1717,7 @@
             via: VIA_LABEL[it.loc_via] || "-", reason: it.loc_via === "exempt" ? it.exempt_reason || "사유 없음" : null,   // 보고서 표는 한 줄이라 예외 사유는 표 아래에 따로
             scanned_at: it.loc_scanned_at || null, marked_at: it.marked_at || it.checked_at || null, opened_at: it.opened_at || null, by: it.checked_by_name };
         }),
+      moveItems: extra.moves || [], recheckItems: extra.recheck || [],   // 조사 중 위치 변경, 지난 수량 다름 재확인
       removedItems: (a.qty_removed || []).map(function (x) { return { lct_cd: x.lct_cd, item_cd: x.item_cd, item_nm: x.item_nm, qty: x.qty, rr: x.rr_qty, at: x.removed_at, by: x.removed_by }; })
     };
   }
@@ -1724,10 +1728,46 @@
   }
 
   var report = null;   // 미리보기 중인 보고서 {file, error, name}
-  function openReport() {
+  // 보고서에 넣을 부가 기록 (못 불러와도 보고서는 만들어짐)
+  //   moves: 조사하는 동안 앱에서 요청한 위치 변경 (조사 목록의 위치는 시작 때 기준이라 따로 보여 줌)
+  //   recheck: 지난 조사에서 수량 다름이었던 부품 + 이번 결과
+  var reportOpening = false;
+  async function loadReportExtras(a) {
+    var out = { moves: [], recheck: [] };
+    var nameOf = function (pn) { var it = findAuditItem(pn), p = state.parts[pn]; return (it && it.item_nm) || (p && p.item_nm) || ""; };
+    try {
+      var m = await sb.from("inv_requests").select("item_cd,params,status,error,requested_by_name,requested_at,finished_at")
+        .eq("kind", "loc_change").in("status", ["done", "failed"]).gte("requested_at", a.started_at).lte("requested_at", a.finished_at || new Date().toISOString()).order("requested_at");
+      if (!m.error) out.moves = m.data.filter(function (r) { return r.status === "done" || r.status === "failed"; }).map(function (r) {
+        return { at: r.finished_at || r.requested_at, item_cd: r.item_cd, item_nm: nameOf(r.item_cd), from: (r.params && r.params.from) || "", to: (r.params && r.params.to) || "", by: r.requested_by_name, status: r.status, error: r.error };
+      });
+    } catch (e) { /* 이 구역만 빠짐 */ }
+    try {
+      var codes = state.auditItems.map(function (x) { return x.item_cd; }), prev = {};
+      for (var i = 0; i < codes.length; i += 150) {
+        var r = await sb.from("inv_audit_items").select("item_cd,qty,rr_qty,counted,checked_at,audit_id,inv_audits(kind)")
+          .eq("status", "diff").neq("audit_id", a.id).in("item_cd", codes.slice(i, i + 150));
+        if (r.error) throw r.error;
+        r.data.forEach(function (x) { if (!prev[x.item_cd] || String(x.checked_at) > String(prev[x.item_cd].checked_at)) prev[x.item_cd] = x; });
+      }
+      out.recheck = Object.keys(prev).map(function (k) {
+        var x = prev[k], it = findAuditItem(k);
+        if (!it) return null;
+        return { lct_cd: it.lct_cd, item_cd: k, item_nm: it.item_nm, prev_at: x.checked_at, prev_kind: x.inv_audits && x.inv_audits.kind, prev_counted: x.counted, prev_qty: Number(x.qty) + (Number(x.rr_qty) || 0), now: it.status || null, now_counted: it.counted };
+      }).filter(Boolean).sort(function (x, y) {   // 아직 일치가 아닌 것(미확인·다름)을 먼저
+        return (x.now === "ok") - (y.now === "ok") || (x.lct_cd || "~").localeCompare(y.lct_cd || "~") || x.item_cd.localeCompare(y.item_cd);
+      });
+    } catch (e) { /* 이 구역만 빠짐 */ }
+    return out;
+  }
+  async function openReport() {
     var a = currentAudit();
-    if (!a || !window.AuditReport) return;
-    var pages = AuditReport.pages(reportData(a, state.auditItems));
+    if (!a || !window.AuditReport || report || reportOpening) return;
+    reportOpening = true;
+    var slow = setTimeout(function () { toast("보고서를 준비하는 중…"); }, 700), extra = {};
+    try { extra = await loadReportExtras(a); } catch (e) { extra = {}; }
+    clearTimeout(slow); reportOpening = false;
+    var pages = AuditReport.pages(reportData(a, state.auditItems, extra));
     report = { file: null, error: "", name: reportFileName(a) };
     var el = document.createElement("div");
     el.id = "reportView"; el.className = "reportview";
@@ -1795,6 +1835,57 @@
     return /SamsungBrowser/.test(u) ? "삼성 인터넷" : /KAKAOTALK/i.test(u) ? "카카오톡" : /NAVER/.test(u) ? "네이버" : /EdgA/.test(u) ? "엣지" : /Chrome/.test(u) ? "크롬" : /Safari/.test(u) ? "사파리" : "기타";
   }
 
+  // ---------- 함께 작업 중 (여러 명이 같은 조사를 나눠 할 때) ----------
+  //   Realtime presence 로 "누가 어느 위치·부품을 보고 있는지"만 주고받음 (저장하지 않고, 화면을 닫으면 사라짐).
+  //   막지는 않고 표시만 한다: 조사 화면 위 줄, 위치 제목 옆, 부품 창 안내
+  var peers = {}, lastTracked = "";
+  function workingLoc() {
+    if (auditOpen.pn && !$("sheet").hidden) { var it = findAuditItem(auditOpen.pn); return it ? it.lct_cd || "" : ""; }
+    return state.auditLoc || "";
+  }
+  function trackPresence(force) {
+    if (!auditChannel || !state.user || !state.auditOpen) return;
+    var pl = { name: state.user.name || "", loc: workingLoc(), pn: auditOpen.pn && !$("sheet").hidden ? auditOpen.pn : "" };
+    var sig = pl.loc + "|" + pl.pn;
+    if (!force && sig === lastTracked) return;
+    lastTracked = sig;
+    try { auditChannel.track(Object.assign(pl, { at: new Date().toISOString() })); } catch (e) { /* 표시만 못 함 */ }
+  }
+  function syncPeers() {
+    var next = {};
+    try {
+      var ps = auditChannel ? auditChannel.presenceState() : {};
+      Object.keys(ps).forEach(function (k) {
+        if (state.user && k === state.user.id) return;
+        var m = ps[k] && ps[k][ps[k].length - 1];
+        if (m && m.name) next[k] = m;
+      });
+    } catch (e) { /* 표시만 못 함 */ }
+    peers = next;
+    var b = $("aPeer");
+    if (b) { var it = findAuditItem(b.getAttribute("data-pn")); if (it) b.innerHTML = peerNoteHtml(it); }
+    if (state.tab === "audit" && $("sheet").hidden) render(false);
+  }
+  function peerList() { return Object.keys(peers).map(function (k) { return peers[k]; }); }
+  function peerNames(l) { return esc(l.map(function (p) { return p.name; }).join(", ")); }
+  // 부품 창: 같은 부품을 보는 사람 / 같은 위치에서 작업 중인 사람
+  function peerNoteHtml(it) {
+    var same = peerList().filter(function (p) { return p.pn === it.item_cd; });
+    if (same.length) return '<div class="peer warn">' + peerNames(same) + '님이 지금 이 부품을 확인하는 중입니다</div>';
+    var loc = it.lct_cd || "";
+    var near = loc ? peerList().filter(function (p) { return p.loc === loc; }) : [];
+    return near.length ? '<div class="peer">' + peerNames(near) + '님이 같은 위치(' + esc(loc) + ')에서 작업 중입니다</div>' : '';
+  }
+  function peerBarHtml() {
+    var l = peerList();
+    if (!l.length) return '';
+    return '<div class="peers"><b>함께 작업 중</b>' + l.map(function (p) { return '<span>' + esc(p.name) + (p.loc ? ' <i class="mono-loc">' + esc(p.loc) + '</i>' : '') + '</span>'; }).join('') + '</div>';
+  }
+  function peerLocTag(loc) {
+    var l = loc ? peerList().filter(function (p) { return p.loc === loc; }) : [];
+    return l.length ? '<span class="peer-tag">' + peerNames(l) + ' 작업 중</span>' : '';
+  }
+
   var auditChannel = null;
   async function openAudit(kind) {
     state.auditOpen = kind; state.auditLoc = null; state.auditFilter = "left"; state.auditItems = [];
@@ -1810,11 +1901,17 @@
   // 다른 직원이 같은 조사를 확인하면 바로 반영
   function subscribeAudit(id) {
     if (auditChannel) { sb.removeChannel(auditChannel); auditChannel = null; }
-    auditChannel = sb.channel("audit-" + id)
+    peers = {}; lastTracked = "";
+    auditChannel = sb.channel("audit-" + id, { config: { presence: { key: state.user.id } } })
       .on("postgres_changes", { event: "UPDATE", schema: "public", table: "inv_audit_items", filter: "audit_id=eq." + id }, function (p) {
         var it = findAuditItem(p.new.item_cd);
         if (!it) return;
         Object.assign(it, p.new);
+        // 내가 보고 있는 부품을 다른 사람이 방금 확인했으면 창 안에 알려 줌
+        if (auditOpen.pn === it.item_cd && !$("sheet").hidden && p.new.status && p.new.checked_by_name && p.new.checked_by_name !== (state.user && state.user.name)) {
+          var pb = $("aPeer");
+          if (pb && pb.getAttribute("data-pn") === it.item_cd) pb.innerHTML = '<div class="peer warn">' + esc(p.new.checked_by_name) + '님이 방금 ' + (p.new.status === "ok" ? "일치" : "수량 다름") + '으로 확인했습니다</div>';
+        }
         auditCounts[id] = auditStatsOf(state.auditItems);
         if (state.tab === "audit" && $("sheet").hidden) render(false);
       })
@@ -1828,7 +1925,8 @@
         auditCounts[id] = auditStatsOf(state.auditItems);
         if (state.tab === "audit" && $("sheet").hidden) render(false);
       })
-      .subscribe();
+      .on("presence", { event: "sync" }, syncPeers)
+      .subscribe(function (status) { if (status === "SUBSCRIBED") trackPresence(true); });
   }
 
   // ---------- 다른 탭 ----------
@@ -1844,20 +1942,57 @@
       (rows ? '<div class="group">' + rows + '</div><p class="footnote">누르면 스캔 화면에서 다시 조회합니다.</p>' : '<div class="empty">아직 스캔한 바코드가 없습니다</div>');
   }
 
+  // 수량 다름 체크의 처리 결과 (체크 기록을 정리할 때 고름)
+  var RES_LABEL = { adjusted: "재고 정정함", explained: "원인 확인", miscount: "잘못 센 것" };
+  var RES_HINT = { adjusted: "DMS 재고를 실사 수량으로 정정했습니다", explained: "다른 곳 보관·미입고 등 원인을 확인했고 실사 수량이 맞습니다", miscount: "잘못 센 것이라 DMS 수량이 맞습니다" };
+  function checkDays(c) { return Math.max(0, Math.floor((Date.now() - new Date(c.checked_at).getTime()) / 86400000)); }
+  function histHtml() {
+    var h = state.checkHist;
+    if (!h) return '<button class="btn-ghost" id="logHist" style="margin-top:14px">처리 완료 기록 보기</button>';
+    if (h.loading) return '<div class="loading" style="margin-top:14px">불러오는 중…</div>';
+    if (h.error) return '<div class="notice">처리 기록을 불러오지 못했습니다: ' + esc(h.error) + '</div>';
+    if (!h.rows.length) return '<div class="section-label">처리 완료</div><div class="empty">아직 처리한 기록이 없습니다</div>';
+    return '<div class="section-label">처리 완료 · 최근 ' + h.rows.length + '건</div><div class="group">' + h.rows.map(function (c) {
+      var d = new Date(c.cleared_at);
+      return '<div class="row"><div class="row-main"><div class="pn">' + esc(c.item_cd) + '</div><div class="row-sub">' + esc(c.item_nm) + '</div>' +
+        '<div class="row-sub">' + (d.getMonth() + 1) + '/' + d.getDate() + ' ' + hhmm(c.cleared_at) + ' · ' + esc(c.cleared_by_name || "") + ' · 실사 ' + qtyNum(c.counted_qty) + ' / DMS ' + qtyNum(checkBase(c)) + '</div></div>' +
+        '<span class="pill ' + (c.resolution ? 'ok' : '') + '">' + (RES_LABEL[c.resolution] || "정리됨") + '</span></div>';
+    }).join('') + '</div>';
+  }
+  async function loadCheckHist() {
+    state.checkHist = { loading: true }; render(false);
+    var r = await sb.from("inv_checks").select("*").not("cleared_at", "is", null).order("cleared_at", { ascending: false }).limit(60);
+    state.checkHist = r.error ? { error: r.error.message } : { rows: r.data };
+    render(false);
+  }
+  function openResolve(id) {
+    var c = state.checks.filter(function (x) { return x.id === id; })[0];
+    if (!c) return;
+    openSheet(
+      '<div class="sheet-head"><button class="cancel" data-close>취소</button><h2>처리 결과</h2><span></span></div>' +
+      '<p class="sheet-sub"><span class="pn">' + esc(c.item_cd) + '</span> · ' + esc(c.item_nm) + '</p>' +
+      '<div class="group">' + Object.keys(RES_LABEL).map(function (k) {
+        return '<button class="row" data-resolve="' + k + '" data-id="' + id + '"><div class="row-main"><div class="row-title">' + RES_LABEL[k] + '</div><div class="row-sub">' + RES_HINT[k] + '</div></div>' + CHEV + '</button>';
+      }).join('') + '</div>' +
+      '<p class="footnote">처리하면 체크 기록에서 빠지고 "처리 완료 기록"에 남습니다.</p>'
+    );
+  }
+
   function viewLog() {
-    var head = '<h1 class="large">체크 기록</h1><p class="meta">수량이 다른 부품 ' + state.checks.length + '건</p>';
-    if (!state.checks.length) return head + '<div class="empty">아직 체크한 부품이 없습니다.<br>위치를 스캔하고 수량이 다른 부품의 동그라미를 누르세요.</div>';
+    var old = state.checks.filter(function (c) { return checkDays(c) >= 3; }).length;
+    var head = '<h1 class="large">체크 기록</h1><p class="meta">수량이 다른 부품 ' + state.checks.length + '건' + (old ? ' · <span class="warn-text">3일 넘게 처리 안 된 것 ' + old + '건</span>' : '') + '</p>';
+    if (!state.checks.length) return head + '<div class="empty">아직 체크한 부품이 없습니다.<br>위치를 스캔하고 수량이 다른 부품의 동그라미를 누르세요.</div>' + histHtml();
     var html = "", day = null;
     state.checks.forEach(function (c) {
       var d = new Date(c.checked_at), key = (d.getMonth() + 1) + "월 " + d.getDate() + "일";
       if (key !== day) { if (day !== null) html += '</div>'; day = key; html += '<div class="section-label">' + key + '</div><div class="group">'; }
       var diff = c.counted_qty - checkBase(c);
-      html += '<button class="row" data-logitem="' + c.id + '"><div class="row-main"><div class="pn">' + esc(c.item_cd) + '</div><div class="row-sub">' + esc(c.item_nm) + '</div><div class="row-sub">' + esc(c.lct_cd || "-") + ' · ' + hhmm(c.checked_at) + ' · ' + esc(c.checked_by_name || "") + (c.memo ? ' · ' + esc(c.memo) : '') + '</div>' + splitNote(c.dms_qty, Number(c.rr_qty) || 0) + '</div>' +
+      html += '<button class="row" data-logitem="' + c.id + '"><div class="row-main"><div class="pn">' + esc(c.item_cd) + '</div><div class="row-sub">' + esc(c.item_nm) + '</div><div class="row-sub">' + esc(c.lct_cd || "-") + ' · ' + hhmm(c.checked_at) + ' · ' + esc(c.checked_by_name || "") + (checkDays(c) >= 1 ? ' · <span class="' + (checkDays(c) >= 3 ? 'warn-text' : '') + '">' + checkDays(c) + '일째 미처리</span>' : '') + (c.memo ? ' · ' + esc(c.memo) : '') + '</div>' + splitNote(c.dms_qty, Number(c.rr_qty) || 0) + '</div>' +
         '<div class="diff"><b>' + qtyNum(checkBase(c)) + ' → ' + qtyNum(c.counted_qty) + '</b><span class="tag warn">' + (diff > 0 ? "+" : "−") + Math.abs(qtyNum(diff)) + '</span></div></button>';
     });
     return head +
       '<div style="margin-bottom:6px"><button class="btn-secondary" id="exportBtn">엑셀로 내보내기</button></div>' + html + '</div>' +
-      '<p class="footnote">DMS 수량은 체크한 시점의 값입니다. 재고를 정정한 뒤 기록을 지우면 목록에서 사라집니다.</p>';
+      '<p class="footnote">DMS 수량은 체크한 시점의 값입니다. 재고를 정정했거나 원인을 확인했으면 부품 화면에서 "체크 기록 지우기"로 처리 결과를 남기세요.</p>' + histHtml();
   }
 
   // ---------- 위치 변경 이력 (앱에서 요청한 위치 변경) ----------
@@ -1994,7 +2129,7 @@
   window.addEventListener("online", renderNet);
 
   function render(resetScroll) {
-    try { renderView(resetScroll); } finally { renderMoveBar(); }
+    try { renderView(resetScroll); } finally { renderMoveBar(); trackPresence(); }
   }
   function renderView(resetScroll) {
     var nav = $("nav"), content = $("content");
@@ -2063,7 +2198,7 @@
     var a = document.activeElement;
     if (a && $("sheet").contains(a)) a.blur();
     $("sheet").hidden = true; $("backdrop").hidden = true;
-    sheetExempt = {}; moveFromAudit = null; auditOpen = { pn: null, at: null };
+    sheetExempt = {}; moveFromAudit = null; auditOpen = { pn: null, at: null }; trackPresence();
     if (exitOpen) { exitOpen = false; armBack(); }
   }
   $("backdrop").addEventListener("click", closeSheet);
@@ -2238,6 +2373,7 @@
       if (t === "scan" && state.tab === "scan") state.result = [];
       if (t === "audit" && state.tab === "audit") { state.auditOpen = null; state.auditLoc = null; }
       if (t === "audit") loadAudits().then(function () { if (state.tab === "audit") render(false); });
+      if (t === "log") loadChecks().then(function () { if (state.tab === "log") render(false); });   // 다른 사람이 새로 체크한 것도 보이게
       state.tab = t;
       render(true); return;
     }
@@ -2286,7 +2422,9 @@
       return;
     }
     if (el.id === "saveCheck") { saveCheck(el.getAttribute("data-pn")); return; }
-    if (el.id === "clearCheck") { clearCheck(Number(el.getAttribute("data-id"))); return; }
+    if (el.id === "clearCheck") { openResolve(Number(el.getAttribute("data-id"))); return; }
+    if (el.hasAttribute("data-resolve")) { clearCheck(Number(el.getAttribute("data-id")), el.getAttribute("data-resolve")); return; }
+    if (el.id === "logHist") { loadCheckHist(); return; }
     if (el.id === "saveMove") { saveMove(el.getAttribute("data-pn")); return; }
     if (el.id === "unknownLookup") { lookupUnknown(el.getAttribute("data-pn"), el); return; }
     if (el.hasAttribute("data-logitem")) {
@@ -2296,7 +2434,7 @@
     }
     // 재고조사
     if (el.hasAttribute("data-audit")) { openAudit(el.getAttribute("data-audit")); return; }
-    if (el.id === "auditBack") { state.auditOpen = null; state.auditLoc = null; if (auditChannel) { sb.removeChannel(auditChannel); auditChannel = null; } render(true); return; }
+    if (el.id === "auditBack") { state.auditOpen = null; state.auditLoc = null; peers = {}; lastTracked = ""; if (auditChannel) { sb.removeChannel(auditChannel); auditChannel = null; } render(true); return; }
     if (el.id === "auditStart") { startAudit(el); return; }
     if (el.hasAttribute("data-afilter")) { state.auditFilter = el.getAttribute("data-afilter"); render(false); return; }
     if (el.id === "auditLocClear") { state.auditLoc = null; render(false); return; }
@@ -2405,11 +2543,12 @@
     await loadChecks();
     closeSheet(); if (nextScan()) toast("수량 다름으로 체크했습니다 · " + pn); else render(false);
   }
-  async function clearCheck(id) {
-    var r = await sb.from("inv_checks").update({ cleared_at: new Date().toISOString(), cleared_by_name: state.user.name }).eq("id", id);
+  async function clearCheck(id, resolution) {
+    var r = await sb.from("inv_checks").update({ cleared_at: new Date().toISOString(), cleared_by_name: state.user.name, resolution: resolution || null }).eq("id", id);
     if (r.error) { toast("지우지 못했습니다: " + r.error.message); return; }
+    state.checkHist = null;   // 처리 완료 기록은 다시 불러오게
     await loadChecks();
-    closeSheet(); if (nextScan()) toast("체크를 지웠습니다"); else render(false);
+    closeSheet(); if (nextScan()) toast("처리했습니다 · " + (RES_LABEL[resolution] || "체크 기록 지움")); else render(false);
   }
 
   async function saveMove(pn) {
@@ -2611,7 +2750,7 @@
     store.set("lastUser", null); state.authWait = false;
     await sb.auth.signOut();
     dropReqChannel();
-    state.user = null; state.result = []; state.tab = "scan"; state.parts = {}; state.locs = {}; state.checks = []; state.moveLog = null; state.rrParts = {}; state.rdc = {};
+    state.user = null; state.result = []; state.tab = "scan"; state.parts = {}; state.locs = {}; state.checks = []; state.moveLog = null; state.checkHist = null; state.rrParts = {}; state.rdc = {};
     render(true);
   }
 

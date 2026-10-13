@@ -94,6 +94,11 @@ function check(name, ok, extra) { results.push((ok ? 'PASS ' : 'FAIL ') + name +
     if (t === 'rpc/inv_reopen_audit') { Object.assign(audit, { finished_at: null, finished_by_name: null, reopened_at: iso(Date.now()), reopened_by_name: '시험' }); return json(null, 204); }
     if (t === 'rpc/inv_finish_audit') { Object.assign(audit, { finished_at: iso(Date.now()), finished_by_name: '시험' }); return json(null, 204); }
     if (t === 'inv_audit_items') {
+      const inQ = u.searchParams.get('item_cd');
+      if (m === 'GET' && inQ && inQ.startsWith('in.')) {   // 보고서 '지난 수량 다름 재확인': 여러 부품의 지난 조사에서 수량 다름이었던 것
+        const codes = inQ.slice(4, -1).split(',');
+        return json(auditHist.filter(h => codes.includes(h.item_cd) && h.status === 'diff'));
+      }
       if (m === 'GET' && u.searchParams.get('item_cd')) {   // 부품별 마지막 재고조사
         const pn = u.searchParams.get('item_cd').replace('eq.', '');
         return json(auditHist.filter(h => h.item_cd === pn).concat(auditItems.filter(x => x.item_cd === pn && x.status).map(x => Object.assign({ audit_id: audit.id, inv_audits: { kind: audit.kind } }, x))).sort((a, b) => b.checked_at.localeCompare(a.checked_at)));
@@ -112,6 +117,7 @@ function check(name, ok, extra) { results.push((ok ? 'PASS ' : 'FAIL ') + name +
     if (t === 'inv_rr_parts') return json(rrParts);
     if (t === 'inv_checks') {
       if (m === 'GET') {
+        if (u.searchParams.get('cleared_at') === 'not.is.null') return json(checks.filter(c => c.cleared_at).sort((a, b) => b.cleared_at.localeCompare(a.cleared_at)));   // 처리 완료 기록
         let rows = checks.filter(c => !c.cleared_at);
         const aid = u.searchParams.get('audit_id'), pn = u.searchParams.get('item_cd');
         if (aid) rows = rows.filter(c => 'eq.' + c.audit_id === aid && 'eq.' + c.item_cd === pn);
@@ -135,6 +141,33 @@ function check(name, ok, extra) { results.push((ok ? 'PASS ' : 'FAIL ') + name +
     localStorage.setItem('inventory-scan-auth', JSON.stringify({ access_token: 'x', refresh_token: 'y', token_type: 'bearer', expires_in: 3600, expires_at: exp, user: { id: uid, aud: 'authenticated', role: 'authenticated' } }));
   }, [USER.id, Math.floor(now / 1000) + 86400 * 365]);
 
+  await page.addInitScript(() => {
+    window.__wsSent = [];
+    class FakeWS {
+      constructor(url) { this.url = url; this.readyState = 0; setTimeout(() => { this.readyState = 1; this.onopen && this.onopen({}); }, 5); }
+      _recv(frame) { setTimeout(() => this.onmessage && this.onmessage({ data: JSON.stringify(frame) }), 5); }
+      send(data) {
+        let m; try { m = JSON.parse(data); } catch (e) { return; }
+        const [jref, ref, topic, event, payload] = Array.isArray(m) ? m : [m.join_ref, m.ref, m.topic, m.event, m.payload];
+        window.__wsSent.push({ topic, event, payload });
+        if (event === 'phx_join') {
+          const pcs = ((payload.config || {}).postgres_changes || []).map((c, i) => Object.assign({ id: i + 1 }, c));
+          this._recv([jref, ref, topic, 'phx_reply', { status: 'ok', response: { postgres_changes: pcs } }]);
+          if (topic.startsWith('realtime:audit-')) {
+            window.__auditWs = this; this._jref = jref; this._topic = topic;
+            this._recv([jref, null, topic, 'presence_state', { u2: { metas: [{ phx_ref: 'r1', name: '박작업', loc: 'A140112', pn: 'PN10001', at: new Date().toISOString() }] } }]);
+          }
+          return;
+        }
+        this._recv([jref, ref, topic, 'phx_reply', { status: 'ok', response: {} }]);   // 하트비트·track·leave 등
+      }
+      close() { this.readyState = 3; this.onclose && this.onclose({ code: 1000 }); }
+      addEventListener() {} removeEventListener() {}
+    }
+    FakeWS.CONNECTING = 0; FakeWS.OPEN = 1; FakeWS.CLOSING = 2; FakeWS.CLOSED = 3;
+    window.WebSocket = FakeWS;
+    window.__peerLeave = () => { const w = window.__auditWs; w._recv([w._jref, null, w._topic, 'presence_diff', { joins: {}, leaves: { u2: { metas: [{ phx_ref: 'r1', name: '박작업', loc: 'A140112', pn: 'PN10001' }] } } }]); };
+  });
   await page.goto('http://localhost:' + PORT + '/');
   await page.waitForSelector('#manualInput', { timeout: 10000 });
 
@@ -173,6 +206,26 @@ function check(name, ok, extra) { results.push((ok ? 'PASS ' : 'FAIL ') + name +
   await page.click('[data-tab="audit"]');
   await page.click('[data-audit="weekly"]');
   await page.waitForSelector('[data-aitem="PN10000"]');
+  // ===== 함께 작업 중 (구역 분담 표시): 박작업 이 A140112 의 PN10001 을 보는 중 =====
+  await page.waitForSelector('.peers', { timeout: 5000 });
+  const peersTxt = await page.textContent('.peers');
+  check('조사 화면 위에 함께 작업 중 (이름·위치)', peersTxt.includes('박작업') && peersTxt.includes('A140112'), peersTxt);
+  check('위치 제목 옆에 "박작업 작업 중"', (await page.$$eval('.loc-head', hs => hs.filter(h => h.textContent.includes('A140112') && h.textContent.includes('박작업 작업 중')).length)) === 1);
+  if (process.env.SHOTS) await page.screenshot({ path: path.join(process.env.SHOTS, 'peers_list.png') });
+  await page.click('[data-aitem="PN10001"]');
+  const peerSame = await page.textContent('#aPeer');
+  check('같은 부품을 보는 사람이 있으면 창에 경고', peerSame.includes('박작업님이 지금 이 부품을 확인하는 중입니다') && (await page.$('#aPeer .peer.warn')) !== null, peerSame);
+  if (process.env.SHOTS) await page.screenshot({ path: path.join(process.env.SHOTS, 'peers_sheet.png') });
+  await page.click('[data-close]');
+  await page.click('[data-aitem="PN10000"]');
+  const peerNear = await page.textContent('#aPeer');
+  check('같은 위치에서 작업 중이면 창에 안내', peerNear.includes('박작업님이 같은 위치(A140112)에서 작업 중입니다'), peerNear);
+  const tracked = await page.evaluate(() => window.__wsSent.filter(x => x.event === 'presence').map(x => x.payload.payload || x.payload));
+  check('내가 보는 위치·부품을 알림 (track)', tracked.some(t => t.name === '시험' && t.loc === 'A140112' && t.pn === 'PN10000'), JSON.stringify(tracked.slice(-2)));
+  await page.click('[data-close]');
+  await page.evaluate(() => window.__peerLeave());
+  await page.waitForFunction(() => !document.querySelector('.peers'), null, { timeout: 5000 });
+  check('상대가 나가면 표시가 사라짐', !(await page.$('.peers')) && !(await page.$('.peer-tag')));
   // ===== 현장 확인: 위치를 스캔해야 일치·수량 다름 =====
   const scan = async (code) => { await page.evaluate(() => document.activeElement && document.activeElement.blur()); await page.keyboard.type(code); await page.keyboard.press('Enter'); await page.waitForTimeout(200); };
   await page.click('[data-aitem="PN10000"]');
@@ -294,6 +347,8 @@ function check(name, ok, extra) { results.push((ok ? 'PASS ' : 'FAIL ') + name +
   const wkRows = await page.evaluate(h => { const e = document.createElement('div'); e.innerHTML = h; return [...e.querySelectorAll('.rp-list.wk tbody tr')].map(r => [...r.cells].map(c => c.textContent)); }, wkHtml);
   const rowKa = wkRows.find(r => r[0] === '가'), rowNa = wkRows.find(r => r[0] === '나'), rowTot = wkRows.find(r => r[0] === '합계');
   check('작업자별 작업 시간: 5분 이하 간격만 합산 (가 = 5분, 09:00 ~ 09:22), 한 건뿐인 나는 -, 합계는 5분', !!rowKa && rowKa[5].startsWith('5분') && rowKa[5].includes('09:00 ~ 09:22') && !!rowNa && rowNa[5] === '-' && !!rowTot && rowTot[5] === '5분', JSON.stringify(wkRows));
+  check('보고서에 조사 중 위치 변경 (완료·실패만, 이전→새 위치)', rv.includes('조사 중 위치 변경2건') && rv.includes('B000001') && rv.includes('완료') && rv.includes('실패') && !rv.includes('취소'), rv.slice(rv.indexOf('조사 중 위치'), rv.indexOf('조사 중 위치') + 160));
+  check('보고서에 지난 수량 다름 재확인 (지난 조사 결과)', rv.includes('지난 수량 다름 재확인1건') && rv.includes('10/5 일일 · 실사 4 / DMS 5'), rv.slice(rv.indexOf('지난 수량'), rv.indexOf('지난 수량') + 200));
   check('보고서 쪽 끝에 제목만 남지 않음', await page.$$eval('#rvPages .rp-page', ps => ps.every(p => { const f = p.querySelector('.rp-foot'); const prev = f && f.previousElementSibling; return !prev || !prev.classList.contains('rp-h'); })));
   check('수량 다름 메모는 "메모" 표식이 붙은 상자', await page.$$eval('#rvPages tr.mm td div', els => els.length > 0 && els.every(e => e.querySelector('b') && e.textContent.startsWith('메모') && getComputedStyle(e).backgroundColor !== 'rgba(0, 0, 0, 0)')));
   check('보고서에 작업자별 확인 (이름·건수·비율)', rv.includes('작업자별 확인') && /시험\s*\d+건/.test(rv) && rv.includes('%'), rv.slice(rv.indexOf('작업자별'), rv.indexOf('작업자별') + 120));
@@ -539,6 +594,32 @@ function check(name, ok, extra) { results.push((ok ? 'PASS ' : 'FAIL ') + name +
   await page.click('[data-tab="log"]');
   const lg = await page.textContent('#view');
   check('체크 기록: 합계 → 실사, 차이는 합계 기준', lg.includes('5 → 3') && lg.includes('−2') && lg.includes('BMW 1 + RR 4'), '');
+  // ===== 수량 다름 후속 관리: 며칠째 미처리, 처리 결과 고르기, 처리 완료 기록 =====
+  checks.push({ id: 900, branch: '해운대', item_cd: 'PN10003', item_nm: '부품3', lct_cd: 'A140112', dms_qty: 4, rr_qty: 0, counted_qty: 2, memo: '파손', audit_id: null, checked_by_name: '김확인', checked_at: iso(now - 4 * 86400000), cleared_at: null });
+  await page.click('[data-tab="scan"]');
+  await page.clock.fastForward(61000); await page.waitForTimeout(500);
+  await page.click('[data-tab="log"]');
+  await page.waitForFunction(() => document.querySelector('#view').textContent.includes('4일째'), null, { timeout: 5000 }).catch(() => {});   // 탭을 열면 체크 기록을 새로 받아 옴
+  const lg2 = await page.textContent('#view');
+  check('체크 기록에 며칠째 미처리 + 3일 넘은 건수', lg2.includes('4일째 미처리') && lg2.includes('3일 넘게 처리 안 된 것 1건'), lg2.slice(0, 200));
+  check('처리 완료 기록 버튼 (처음엔 접혀 있음)', !!(await page.$('#logHist')));
+  await page.click('[data-tab="scan"]');
+  await page.fill('#manualInput', 'PN10003'); await page.press('#manualInput', 'Enter');
+  await page.waitForSelector('[data-check="PN10003"]');
+  await page.click('[data-check="PN10003"]');
+  await page.click('#clearCheck');
+  const resOpts = await page.$$eval('[data-resolve]', e => e.map(x => x.dataset.resolve));
+  check('체크 기록 지우기 → 처리 결과 3가지 중에 고름', JSON.stringify(resOpts) === '["adjusted","explained","miscount"]', JSON.stringify(resOpts));
+  await page.click('[data-resolve="adjusted"]');
+  await page.waitForTimeout(400);
+  const c900 = checks.find(c => c.id === 900);
+  check('고른 처리 결과 저장 (재고 정정함)', !!c900.cleared_at && c900.resolution === 'adjusted', JSON.stringify({ cleared: c900.cleared_at, res: c900.resolution }));
+  await page.click('[data-tab="log"]');
+  check('처리하면 체크 기록에서 빠짐', !(await page.textContent('#view')).includes('PN10003'));
+  await page.click('#logHist');
+  await page.waitForFunction(() => document.querySelector('#view').textContent.includes('재고 정정함'), null, { timeout: 5000 });
+  const histTxt = await page.textContent('#view');
+  check('처리 완료 기록에 부품·결과·처리자', histTxt.includes('PN10003') && histTxt.includes('재고 정정함') && histTxt.includes('시험') && histTxt.includes('처리 완료'), histTxt.slice(histTxt.indexOf('처리 완료'), histTxt.indexOf('처리 완료') + 120));
   await page.click('[data-tab="scan"]');
   await page.fill('#manualInput', 'A140112');
   await page.press('#manualInput', 'Enter');

@@ -267,6 +267,14 @@ button.row:active, .row-btn:active { background: var(--fill); }
 .bigqty small { font-size: var(--fs-lg); color: var(--label2); }
 .btn-ghost { display: block; width: 100%; height: 50px; border-radius: 12px; background: var(--fill); color: var(--label); font-size: var(--fs-lg); font-weight: 600; text-align: center; margin-top: 10px; }
 .tab { font-size: var(--fs-2xs); }
+.peers { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; margin-top: 10px; padding: 9px 12px; border-radius: 10px; background: var(--fill); font-size: var(--fs-sm); color: var(--label2); }
+.peers b { color: var(--label); font-weight: 600; }
+.peers span { display: inline-flex; align-items: center; gap: 5px; }
+.peers .mono-loc { font-style: normal; font-size: var(--fs-xs); color: var(--accent); }
+.peer-tag { margin: 0 auto 0 10px; padding: 1px 9px; border-radius: 10px; background: var(--accent-soft); color: var(--accent); font-size: var(--fs-xs); font-weight: 600; }
+.peer { margin: 10px 0 0; padding: 9px 12px; border-radius: 10px; background: var(--accent-soft); color: var(--accent); font-size: var(--fs-sm); font-weight: 600; }
+.peer.warn { background: var(--warn-soft); color: var(--warn); }
+#aPeer:empty { display: none; }
 .loc-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; margin: 22px 4px 8px; }
 .loc-head .mono-loc { font-size: var(--fs-xl); font-weight: 700; color: var(--label); }
 .loc-head span:last-child { font-size: var(--fs-sm); color: var(--label2); }
