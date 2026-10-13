@@ -1717,6 +1717,14 @@
       total: items.length, ok: items.length - diff.length - left.length, diff: diff.length, left: left.length,
       diffItems: diff.map(function (it) { return { lct_cd: it.lct_cd, item_cd: it.item_cd, item_nm: it.item_nm + (it.carry_from ? " (" + carryLabel(it) + ")" : ""), qty: it.qty, rr: itemRr(it), counted: it.counted, by: it.checked_by_name, memo: it.memo }; }),
       leftItems: left.map(function (it) { return { lct_cd: it.lct_cd, item_cd: it.item_cd, item_nm: it.item_nm + (it.carry_from ? " (" + carryLabel(it) + ")" : ""), qty: it.qty, rr: itemRr(it) }; }),
+      // 확인한 부품 전부(일치 포함): 방식(위치 스캔·부품 스캔·예외), 스캔 시각, 확인 시각, 작업자
+      doneItems: items.filter(function (it) { return it.status; })
+        .sort(function (x, y) { return (x.lct_cd || "~").localeCompare(y.lct_cd || "~") || x.item_cd.localeCompare(y.item_cd); })
+        .map(function (it) {
+          return { lct_cd: it.lct_cd, item_cd: it.item_cd, item_nm: it.item_nm, qty: it.qty, rr: itemRr(it), counted: it.counted, status: it.status,
+            via: it.loc_via === "exempt" ? "예외" + (it.exempt_reason ? " (" + it.exempt_reason + ")" : "") : VIA_LABEL[it.loc_via] || "-",
+            scanned_at: it.loc_scanned_at || null, marked_at: it.marked_at || it.checked_at || null, by: it.checked_by_name };
+        }),
       removedItems: (a.qty_removed || []).map(function (x) { return { lct_cd: x.lct_cd, item_cd: x.item_cd, item_nm: x.item_nm, qty: x.qty, rr: x.rr_qty, at: x.removed_at, by: x.removed_by }; }),
       proof: proofReport(items)
     };

@@ -26,6 +26,13 @@
     return d.getFullYear() + "-" + p(d.getMonth() + 1) + "-" + p(d.getDate()) + " " + p(d.getHours()) + ":" + p(d.getMinutes());
   }
 
+  function mdhms(d) {   // 10-12 14:02:33
+    if (!d) return "-";
+    d = new Date(d);
+    var p = function (n) { return String(n).padStart(2, "0"); };
+    return p(d.getMonth() + 1) + "-" + p(d.getDate()) + " " + p(d.getHours()) + ":" + p(d.getMinutes()) + ":" + p(d.getSeconds());
+  }
+
   // ============================================================
   // 보고서 양식 (여기만 바꾸면 됨)
   // ============================================================
@@ -52,6 +59,9 @@
     ".rp-list .m{font-family:'SF Mono',ui-monospace,Menlo,Consolas,'Roboto Mono',monospace}",
     ".rp-list .neg{color:#c0392b;font-weight:700}",
     ".rp-list .pos{color:#1f6fd1;font-weight:700}",
+    ".rp-list.sm{font-size:7.5pt}",
+    ".rp-list.sm th,.rp-list.sm td{padding:1.1mm 1.3mm}",
+    ".rp-list .t{white-space:nowrap;font-variant-numeric:tabular-nums}",
     ".rp-note{color:#555;margin:0 0 2mm}",
     ".rp-none{color:#666;border:1px dashed #bbb;padding:3mm;text-align:center}",
     ".rp-sign{display:flex;justify-content:flex-end;gap:0;margin-top:8mm}",
@@ -65,6 +75,7 @@
    * 보고서 내용을 블록 목록으로 만든다. 블록은 그대로 놓이고, 표({head, rows})는 줄 단위로 쪽을 나눈다.
    * d: {title, branch, period, started_at, started_by, finished_at, finished_by, printed_at,
    *     total, ok, diff, left, diffItems[{lct_cd,item_cd,item_nm,qty,rr,counted,by,memo}], leftItems[{lct_cd,item_cd,item_nm,qty,rr}],
+   *     doneItems[{lct_cd,item_cd,item_nm,qty,rr,counted,status,via,scanned_at,marked_at,by}] (확인한 부품 전부),
    *     removedItems[{lct_cd,item_cd,item_nm,qty,rr,at,by}] (DMS 갱신 때 재고 0으로 뺀 부품),
    *     proof{summary{scanner,camera,part,exempt,none}|null, items[{lct_cd,item_cd,item_nm,result,by,note}]} (현장 확인 점검)}
    *   qty = BMW(DMS) 수량, rr = RR 수량. 차이 = 실사 - (BMW + RR)
@@ -102,6 +113,23 @@
         })
       } });
     } else out.push({ html: '<div class="rp-none">모두 확인했습니다</div>' });
+
+    // 확인 내역: 확인한 부품 전부(일치 포함) — 어떤 방식으로 언제 스캔하고 누가 확인했는지
+    var dn = d.doneItems || [];
+    if (dn.length) {
+      out.push({ html: '<h2 class="rp-h">확인 내역 ' + dn.length + '건</h2><p class="rp-note">확인한 부품 전부 · 스캔 = 위치나 부품 바코드를 찍은 시각, 확인 = 일치·수량 다름을 누른 시각</p>' });
+      out.push({ table: {
+        cls: "sm",
+        head: '<colgroup><col style="width:15mm"><col style="width:21mm"><col><col style="width:9mm"><col style="width:13mm"><col style="width:21mm"><col style="width:22mm"><col style="width:22mm"><col style="width:13mm"></colgroup>' +
+          '<thead><tr><th>위치</th><th>품번</th><th>품명</th><th class="n">수량</th><th>결과</th><th>방식</th><th>스캔</th><th>확인</th><th>작업자</th></tr></thead>',
+        rows: dn.map(function (it) {
+          return '<tr><td class="m">' + esc(it.lct_cd || "-") + '</td><td class="m">' + esc(it.item_cd) + '</td><td>' + esc(it.item_nm) + '</td>' +
+            '<td class="n">' + num(Number(it.qty) + (Number(it.rr) || 0)) + '</td>' +
+            '<td' + (it.status === "ok" ? '>일치' : ' class="neg">다름 ' + num(it.counted)) + '</td>' +
+            '<td>' + esc(it.via) + '</td><td class="t">' + mdhms(it.scanned_at) + '</td><td class="t">' + mdhms(it.marked_at) + '</td><td>' + esc(it.by || "") + '</td></tr>';
+        })
+      } });
+    }
 
     // DMS 갱신 때 재고 0이 되어 목록에서 뺀 부품 (조사 시작 때 수량)
     var rm = d.removedItems || [];
@@ -174,11 +202,12 @@
           return;
         }
         // 표: 머리글 높이와 줄마다 높이를 한 번에 잰다
-        probe.innerHTML = '<table class="rp-list">' + b.table.head + '<tbody>' + b.table.rows.join("") + '</tbody></table>';
+        var tcls = "rp-list" + (b.table.cls ? " " + b.table.cls : "");
+        probe.innerHTML = '<table class="' + tcls + '">' + b.table.head + '<tbody>' + b.table.rows.join("") + '</tbody></table>';
         var t = probe.firstChild, headH = t.tHead.getBoundingClientRect().height;
         var rowH = [].map.call(t.tBodies[0].rows, function (r) { return r.getBoundingClientRect().height; });
         var seg = [];
-        var close = function () { if (seg.length) cur += '<table class="rp-list">' + b.table.head + '<tbody>' + seg.join("") + '</tbody></table>'; seg = []; };
+        var close = function () { if (seg.length) cur += '<table class="' + tcls + '">' + b.table.head + '<tbody>' + seg.join("") + '</tbody></table>'; seg = []; };
         if (cur && used + headH + (rowH[0] || 0) > contentH) flush();
         used += headH;
         b.table.rows.forEach(function (r, i) {
