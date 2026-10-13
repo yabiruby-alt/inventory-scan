@@ -1437,7 +1437,7 @@
     if (m && m.status === "pending") return '<div class="ai-row"><div class="ai-l">위치 변경<small>DMS 반영 중 · ' + esc(m.from || "없음") + ' → ' + esc(m.to) + '</small></div><span class="spin" aria-hidden="true"></span></div>';
     if (m && m.status === "done") return '<div class="ai-row"><div class="ai-l">위치 변경<small>' + esc(m.from || "없음") + ' → ' + esc(m.to) + ' 변경함 · ' + esc(m.time || "") + '</small></div><button class="ai-link" data-amove="' + esc(pn) + '">다시 변경</button></div>';
     if (m && m.status === "failed") return '<div class="ai-row"><div class="ai-l">위치 변경<small class="warn-text">실패 · ' + esc(m.error || "") + '</small></div><button class="ai-link" data-amove="' + esc(pn) + '">다시</button></div>';
-    return '<div class="ai-row"><div class="ai-l">위치 변경<small>다른 곳에서 발견했다면 바로 옮길 수 있습니다</small></div><button class="ai-link" data-amove="' + esc(pn) + '">변경</button></div>';
+    return '<div class="ai-row"><div class="ai-l">위치 변경</div><button class="ai-link" data-amove="' + esc(pn) + '">변경</button></div>';
   }
   function showDiffBox() {
     $("aDiffBox").hidden = false; document.querySelector(".ai-actions").hidden = true; $("aDiffSave").hidden = false;
