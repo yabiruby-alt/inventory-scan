@@ -1139,9 +1139,10 @@
       '</div>' +
       '<div class="section-label">작업</div>' +
       '<div class="group">' +
+        (c ? '<button class="row" data-clear="' + c.id + '"><div class="row-main row-link">체크 기록 지우기</div>' + CHEV + '</button>' : '') +   // 체크가 있으면 맨 위 (체크 내용 수정은 위 '수량 다름 체크됨'을 누르면 됨)
         (moving ? '<div class="row"><div class="row-main" style="color:var(--label2)">위치 변경 · DMS 반영 중</div></div>'
           : '<button class="row" data-move="' + esc(pn) + '"><div class="row-main row-link">위치 변경</div>' + CHEV + '</button>') +
-        '<button class="row" data-check="' + esc(pn) + '"><div class="row-main row-link">' + (c ? "체크 내용 수정" : "수량 다름 체크") + '</div>' + CHEV + '</button>' +
+        (c ? '' : '<button class="row" data-check="' + esc(pn) + '"><div class="row-main row-link">수량 다름 체크</div>' + CHEV + '</button>') +
         '<button class="row" data-refresh="' + esc(pn) + '"><div class="row-main row-link">DMS 현재고 다시 조회</div>' + CHEV + '</button>' +
         '<button class="row" data-movelog="' + esc(pn) + '"><div class="row-main row-link">이 부품 위치 변경 이력</div>' + CHEV + '</button>' +
       '</div>';
@@ -2422,6 +2423,7 @@
       return;
     }
     if (el.id === "saveCheck") { saveCheck(el.getAttribute("data-pn")); return; }
+    if (el.hasAttribute("data-clear")) { openResolve(Number(el.getAttribute("data-clear"))); return; }
     if (el.id === "clearCheck") { openResolve(Number(el.getAttribute("data-id"))); return; }
     if (el.hasAttribute("data-resolve")) { clearCheck(Number(el.getAttribute("data-id")), el.getAttribute("data-resolve")); return; }
     if (el.id === "logHist") { loadCheckHist(); return; }

@@ -606,8 +606,11 @@ function check(name, ok, extra) { results.push((ok ? 'PASS ' : 'FAIL ') + name +
   await page.click('[data-tab="scan"]');
   await page.fill('#manualInput', 'PN10003'); await page.press('#manualInput', 'Enter');
   await page.waitForSelector('[data-check="PN10003"]');
-  await page.click('[data-check="PN10003"]');
-  await page.click('#clearCheck');
+  // 체크가 걸린 부품: '체크 기록 지우기'가 작업 메뉴 맨 위, '체크 내용 수정' 줄은 없음 (위 '수량 다름 체크됨'을 누르면 수정)
+  const workMenu = await page.evaluate(() => { const l = [...document.querySelectorAll('.section-label')].find(e => e.textContent.trim() === '작업'); const g = l && l.nextElementSibling; return g ? { first: g.firstElementChild.textContent, all: g.textContent } : null; });
+  check('체크가 있으면 작업 메뉴 맨 위가 "체크 기록 지우기"', !!workMenu && workMenu.first.includes('체크 기록 지우기'), JSON.stringify(workMenu));
+  check('"체크 내용 수정" 줄은 없고 위 주황색 버튼으로 수정', !!workMenu && !workMenu.all.includes('체크 내용 수정') && !!(await page.$('.btn-spot.diff[data-check="PN10003"]')));
+  await page.click('[data-clear]');
   const resOpts = await page.$$eval('[data-resolve]', e => e.map(x => x.dataset.resolve));
   check('체크 기록 지우기 → 처리 결과 3가지 중에 고름', JSON.stringify(resOpts) === '["adjusted","explained","miscount"]', JSON.stringify(resOpts));
   await page.click('[data-resolve="adjusted"]');
