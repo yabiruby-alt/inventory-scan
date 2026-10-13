@@ -64,11 +64,13 @@
     ".rp-list .t{white-space:nowrap;font-variant-numeric:tabular-nums}",
     ".rp-note{color:#555;margin:0 0 2mm}",
     ".rp-none{color:#666;border:1px dashed #bbb;padding:3mm;text-align:center}",
-    ".rp-sign{display:flex;justify-content:flex-end;gap:0;margin-top:8mm}",
-    ".rp-sign div{width:26mm;border:1px solid #bbb;text-align:center}",
+    ".rp-top{display:flex;justify-content:space-between;align-items:flex-start;gap:4mm;margin:0 0 4mm}",
+    ".rp-top .rp-sub{margin:0}",
+    ".rp-sign{display:flex;flex:none;gap:0}",
+    ".rp-sign div{width:20mm;border:1px solid #bbb;text-align:center}",
     ".rp-sign div+div{border-left:0}",
     ".rp-sign span{display:block;background:#f2f3f5;border-bottom:1px solid #bbb;padding:1mm 0}",
-    ".rp-sign i{display:block;height:16mm}"
+    ".rp-sign i{display:block;height:13mm}"
   ].join("");
 
   /**
@@ -82,7 +84,8 @@
    */
   function blocks(d) {
     var out = [];
-    out.push({ html: '<h1 class="rp-title">' + esc(d.title) + '</h1><p class="rp-sub">' + esc(d.branch) + ' · ' + esc(d.period) + '</p>' });
+    out.push({ html: '<div class="rp-top"><div><h1 class="rp-title">' + esc(d.title) + '</h1><p class="rp-sub">' + esc(d.branch) + ' · ' + esc(d.period) + '</p></div>' +
+      '<div class="rp-sign"><div><span>담당</span><i></i></div><div><span>확인</span><i></i></div><div><span>승인</span><i></i></div></div></div>' });
     out.push({ html: '<table class="rp-info"><tr><td class="l">조사 시작</td><td>' + ymdhm(d.started_at) + ' · ' + esc(d.started_by || "") + '</td>' +
       '<td class="l">조사 종료</td><td>' + ymdhm(d.finished_at) + ' · ' + esc(d.finished_by || "") + '</td></tr>' +
       '<tr><td class="l">출력일시</td><td colspan="3">' + ymdhm(d.printed_at) + '</td></tr></table>' });
@@ -131,19 +134,6 @@
       } });
     }
 
-    // DMS 갱신 때 재고 0이 되어 목록에서 뺀 부품 (조사 시작 때 수량)
-    var rm = d.removedItems || [];
-    if (rm.length) {
-      out.push({ html: '<h2 class="rp-h">DMS 재고 0으로 제외 ' + rm.length + '건</h2>' });
-      out.push({ table: {
-        head: '<colgroup><col style="width:22mm"><col style="width:32mm"><col><col style="width:18mm"><col style="width:30mm"></colgroup>' +
-          '<thead><tr><th>위치</th><th>품번</th><th>품명</th><th class="n">시작 수량</th><th>제외</th></tr></thead>',
-        rows: rm.map(function (it) {
-          return '<tr><td class="m">' + esc(it.lct_cd || "-") + '</td><td class="m">' + esc(it.item_cd) + '</td><td>' + esc(it.item_nm) + '</td><td class="n">' + num(Number(it.qty) + (Number(it.rr) || 0)) + '</td><td>' + ymdhm(it.at) + ' ' + esc(it.by || "") + '</td></tr>';
-        })
-      } });
-    }
-
     // 현장 확인 점검 (위치 스캔해야 확인 — 예외·오래 지나 확인·빠른 연속 확인)
     var pf = d.proof;
     if (pf && pf.summary) {
@@ -162,7 +152,6 @@
       } else out.push({ html: '<div class="rp-none">점검할 건이 없습니다</div>' });
     }
 
-    out.push({ html: '<div class="rp-sign"><div><span>담당</span><i></i></div><div><span>확인</span><i></i></div><div><span>승인</span><i></i></div></div>' });
     return out;
   }
 
