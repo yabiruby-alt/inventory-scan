@@ -84,6 +84,8 @@
     ".rp-list.sm td{padding:1.4mm .8mm;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;overflow-wrap:normal;word-break:normal}",
     ".rp-list td.e{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;overflow-wrap:normal;word-break:normal}",
     ".rp-list.wk td.l{text-align:left;padding-left:3mm}",
+    ".rp-list.wk td.t b{font-weight:600}",
+    ".rp-list.wk td.t small{display:block;margin-top:.4mm;font-size:.85em;color:#8a8f98;font-weight:400}",
     ".rp-list.wk td.bar{text-align:left;white-space:nowrap}",
     ".rp-bar{display:inline-block;vertical-align:middle;width:34mm;height:1.9mm;background:#e9ebef;border-radius:1mm;overflow:hidden}",
     ".rp-bar i{display:block;height:100%;background:#1b1f2a}",
@@ -96,13 +98,23 @@
   ].join("");
 
   // 걸린 시간: 재고 확인 창을 연 때 → 확인 누름 (45초 / 3분 12초 / 1시간 5분). 창 연 시각이 없는 옛 기록은 '-'
-  function elapsed(from, to) {
-    if (!from || !to) return "-";
-    var s = Math.round((new Date(to) - new Date(from)) / 1000);
+  function dur(s) {   // 초 → 45초 / 3분 12초 / 1시간 5분
+    s = Math.round(s);
     if (!(s >= 0)) return "-";
     if (s < 60) return s + "초";
     if (s < 3600) return Math.floor(s / 60) + "분" + (s % 60 ? " " + (s % 60) + "초" : "");
     return Math.floor(s / 3600) + "시간" + (Math.floor(s % 3600 / 60) ? " " + Math.floor(s % 3600 / 60) + "분" : "");
+  }
+  function elapsed(from, to) {
+    if (!from || !to) return "-";
+    return dur((new Date(to) - new Date(from)) / 1000);
+  }
+  // 작업 시간 = 확인과 확인 사이가 5분 이하인 구간의 합 (점심·휴식·자리 비움처럼 긴 공백은 뺌. 통계 대시보드의 '작업시간'과 같은 기준)
+  var WORK_GAP_MS = 5 * 60 * 1000;
+  function workSec(times) {
+    var t = times.slice().sort(function (x, y) { return x - y; }), sum = 0;
+    for (var i = 1; i < t.length; i++) { var g = t[i] - t[i - 1]; if (g <= WORK_GAP_MS) sum += g; }
+    return sum / 1000;
   }
   function hm(d) {   // 14:02 (날짜 없이)
     if (!d) return "-";
@@ -140,14 +152,15 @@
     // 작업자별 확인: 여러 명이 나눠서 조사할 때 누가 몇 건 확인했는지
     var dn = d.doneItems || [], wk = {};
     dn.forEach(function (it) {
-      var w = wk[it.by || "(미상)"] = wk[it.by || "(미상)"] || { n: it.by || "(미상)", c: 0, ok: 0, diff: 0, first: 0, last: 0 };
+      var w = wk[it.by || "(미상)"] = wk[it.by || "(미상)"] || { n: it.by || "(미상)", c: 0, ok: 0, diff: 0, first: 0, last: 0, ts: [] };
       w.c++; if (it.status === "ok") w.ok++; else w.diff++;
       var t = it.marked_at ? Date.parse(it.marked_at) : 0;
-      if (t) { if (!w.first || t < w.first) w.first = t; if (t > w.last) w.last = t; }
+      if (t) { w.ts.push(t); if (!w.first || t < w.first) w.first = t; if (t > w.last) w.last = t; }
     });
+    Object.keys(wk).forEach(function (k) { wk[k].sec = wk[k].ts.length > 1 ? workSec(wk[k].ts) : null; });   // 확인이 한 건뿐이면 알 수 없음
     var wl = Object.keys(wk).map(function (k) { return wk[k]; }).sort(function (x, y) { return y.c - x.c || x.n.localeCompare(y.n); });
     if (wl.length) {
-      out.push({ keep: true, html: '<h2 class="rp-h">작업자별 확인<em>' + wl.length + '명</em></h2>' });
+      out.push({ keep: true, html: '<h2 class="rp-h">작업자별 확인<em>' + wl.length + '명</em><span class="rp-hn">작업 시간 = 확인과 확인 사이가 5분 이하인 구간의 합 (긴 공백은 제외)</span></h2>' });
       out.push({ table: {
         cls: "wk",
         head: '<colgroup><col style="width:34mm"><col style="width:20mm"><col style="width:20mm"><col style="width:22mm"><col><col style="width:34mm"></colgroup>' +
@@ -156,8 +169,8 @@
           var pc = Math.round(w.c / dn.length * 100);
           return '<tr><td class="l"><b>' + esc(w.n) + '</b></td><td class="n">' + w.c + '건</td><td class="n">' + w.ok + '</td><td class="n' + (w.diff ? ' neg' : '') + '">' + w.diff + '</td>' +
             '<td class="bar"><span class="rp-bar"><i style="width:' + pc + '%"></i></span><span class="rp-pct">' + pc + '%</span></td>' +
-            '<td class="t">' + (w.first ? hm(w.first) + ' ~ ' + hm(w.last) : '-') + '</td></tr>';
-        }).concat(wl.length > 1 ? ['<tr class="tot"><td class="l">합계</td><td class="n">' + dn.length + '건</td><td class="n">' + wl.reduce(function (a, w) { return a + w.ok; }, 0) + '</td><td class="n">' + wl.reduce(function (a, w) { return a + w.diff; }, 0) + '</td><td></td><td></td></tr>'] : [])
+            '<td class="t">' + (w.sec == null ? '-' : '<b>' + dur(w.sec) + '</b>') + (w.sec != null && w.first ? '<small>' + hm(w.first) + ' ~ ' + hm(w.last) + '</small>' : '') + '</td></tr>';
+        }).concat(wl.length > 1 ? ['<tr class="tot"><td class="l">합계</td><td class="n">' + dn.length + '건</td><td class="n">' + wl.reduce(function (a, w) { return a + w.ok; }, 0) + '</td><td class="n">' + wl.reduce(function (a, w) { return a + w.diff; }, 0) + '</td><td></td><td class="t">' + (wl.some(function (w) { return w.sec != null; }) ? dur(wl.reduce(function (a, w) { return a + (w.sec || 0); }, 0)) : '-') + '</td></tr>'] : [])
       } });
     }
 

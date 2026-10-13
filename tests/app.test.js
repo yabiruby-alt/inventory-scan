@@ -283,6 +283,17 @@ function check(name, ok, extra) { results.push((ok ? 'PASS ' : 'FAIL ') + name +
   check('보고서에 요약·수량 다름·미확인', rv.includes('주간 재고조사 보고서') && rv.includes('PN10001') && rv.includes('+3') && rv.includes('PN10002') && rv.includes('미확인1건'), '');
   check('보고서 품번·위치 칸은 한 줄 (글이 길어도 안 잘림·안 내려감)', await page.$$eval('#rvPages .rp-list td.k', els => els.length > 0 && els.every(e => e.getBoundingClientRect().height < 26 && e.scrollWidth <= e.clientWidth + 1)));
   check('수량 다름 메모는 품목 줄 아래 한 줄 전체로', await page.$$eval('#rvPages tr.mm td', els => els.length > 0 && els.every(e => e.colSpan === 8)));
+  // 작업자별 작업 시간 = 확인 간격 5분 이하인 구간의 합: 09:00 → 09:03(3분) → 09:20(17분 공백 제외) → 09:22(2분) = 5분, 한 건뿐인 사람은 '-'
+  const wkHtml = await page.evaluate(() => {
+    const t = (h, m) => new Date(2026, 9, 12, h, m, 0).toISOString();
+    const mk = (n, by, m) => ({ lct_cd: 'A140112', item_cd: 'W' + n, item_nm: '시험' + n, qty: 1, rr: 0, status: 'ok', via: '위치 스캔', scanned_at: null, marked_at: t(9, m), opened_at: t(9, m), by });
+    const d = { title: 't', branch: 'b', period: 'p', started_at: t(9, 0), started_by: 'x', finished_at: t(10, 0), finished_by: 'x', printed_at: new Date(), total: 5, ok: 5, diff: 0, left: 0, diffItems: [], leftItems: [],
+      doneItems: [mk(1, '가', 0), mk(2, '가', 3), mk(3, '가', 20), mk(4, '가', 22), mk(5, '나', 30)] };
+    return AuditReport.pages(d).join('');
+  });
+  const wkRows = await page.evaluate(h => { const e = document.createElement('div'); e.innerHTML = h; return [...e.querySelectorAll('.rp-list.wk tbody tr')].map(r => [...r.cells].map(c => c.textContent)); }, wkHtml);
+  const rowKa = wkRows.find(r => r[0] === '가'), rowNa = wkRows.find(r => r[0] === '나'), rowTot = wkRows.find(r => r[0] === '합계');
+  check('작업자별 작업 시간: 5분 이하 간격만 합산 (가 = 5분, 09:00 ~ 09:22), 한 건뿐인 나는 -, 합계는 5분', !!rowKa && rowKa[5].startsWith('5분') && rowKa[5].includes('09:00 ~ 09:22') && !!rowNa && rowNa[5] === '-' && !!rowTot && rowTot[5] === '5분', JSON.stringify(wkRows));
   check('보고서 쪽 끝에 제목만 남지 않음', await page.$$eval('#rvPages .rp-page', ps => ps.every(p => { const f = p.querySelector('.rp-foot'); const prev = f && f.previousElementSibling; return !prev || !prev.classList.contains('rp-h'); })));
   check('수량 다름 메모는 "메모" 표식이 붙은 상자', await page.$$eval('#rvPages tr.mm td div', els => els.length > 0 && els.every(e => e.querySelector('b') && e.textContent.startsWith('메모') && getComputedStyle(e).backgroundColor !== 'rgba(0, 0, 0, 0)')));
   check('보고서에 작업자별 확인 (이름·건수·비율)', rv.includes('작업자별 확인') && /시험\s*\d+건/.test(rv) && rv.includes('%'), rv.slice(rv.indexOf('작업자별'), rv.indexOf('작업자별') + 120));
