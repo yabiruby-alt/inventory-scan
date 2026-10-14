@@ -747,9 +747,13 @@ def _loc_change(page, branch: str, pn: str, params: dict, who) -> dict:
     if not r1.get("ok") or got != to or other:
         LOC_HALT.write_text(f"{_now_iso()} {pn} 저장 후 확인 이상: 위치={got} 다른 변경={other}\n", encoding="utf-8")
         raise RuntimeError(f"저장 후 확인 이상 (위치 {got}, 다른 변경 {list(other)}) — 위치 변경을 멈췄습니다")
+    return _loc_done(branch, pn, cur, to, who, allowed, t0, "화면")
+
+
+def _loc_done(branch, pn, cur, to, who, allowed, t0, how) -> dict:
     # 앱 화면에도 바로 반영
     _rest("PATCH", f"inv_parts?branch=eq.{_q(branch)}&item_cd=eq.{_q(pn)}", {"lct_cd": to, "updated_at": _now_iso()})
     if pn in _S.parts_sent:
         _S.parts_sent[pn] = dict(_S.parts_sent[pn], lct_cd=to)
-    _log(f"위치 변경 {pn}: {cur or '공란'} → {to} ({who}, DMS {time.time() - t0:.1f}초)" + (f" / 화면 저장으로 비워진 값 {allowed}" if allowed else ""))
+    _log(f"위치 변경 {pn}: {cur or '공란'} → {to} ({who}, {how} · DMS {time.time() - t0:.1f}초)" + (f" / 저장으로 비워진 값 {allowed}" if allowed else ""))
     return {"from": cur, "to": to}
