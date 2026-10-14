@@ -368,7 +368,8 @@
     if (via && !$("sheet").hidden && $("aLock")) { countScan("audit", looksLoc(code) ? "loc" : "part", via); auditSheetScan(code, via); return; }
     // 위치 변경 창이 열려 있으면 스캔한 위치를 새 위치 칸에 넣음
     if (!$("sheet").hidden) {
-      if ($("newLoc") && looksLoc(code)) { $("newLoc").value = code; $("newLoc").dispatchEvent(new Event("input", { bubbles: true })); beep(); }
+      if ($("newLoc") && looksLoc(code)) { $("newLoc").value = code; $("newLoc").setAttribute("data-scanned", code); $("newLoc").dispatchEvent(new Event("input", { bubbles: true })); beep(); }
+      else if (via && !$("newLoc")) { buzz(); toast("열린 창이 있어 스캔하지 않습니다 — 창을 닫고 다시 찍으세요"); }   // 조용히 무시하면 찍힌 줄 앎
       return;
     }
     if ($("manualInput")) $("manualInput").value = "";
@@ -486,10 +487,30 @@
 
   // 블루투스 스캐너는 키보드처럼 입력된 뒤 Enter
   var buf = "", bufTimer;
+  // 보이는 입력칸(실사 수량·메모·검색 등)에 커서가 있을 때: 사람 손으로는 불가능한 빠르기(글자 사이 50ms 미만)로
+  //   5글자 이상 들어오고 Enter 가 오면 스캐너로 보고, 칸은 들어오기 전 값으로 되돌린 뒤 스캔으로 처리
+  //   (예: 실사 수량 "3" 입력 후 위치 라벨을 찍으면 "3140112"개가 되던 문제)
+  var SCAN_GAP_MS = 50, fieldScan = null;
+  function fieldKey(e, t) {
+    var now = Date.now(), f = fieldScan;
+    if (e.key === "Enter") {
+      fieldScan = null;
+      if (f && f.el === t && f.text.length >= 5 && now - f.last < SCAN_GAP_MS * 3) {
+        e.preventDefault();
+        t.value = f.before;
+        t.dispatchEvent(new Event("input", { bubbles: true }));
+        resolve(f.text, true);
+      }
+      return;
+    }
+    if (e.key.length !== 1) return;   // 휴대폰 화면 키보드는 글자 대신 'Unidentified' 로 와서 여기서 빠짐
+    if (!f || f.el !== t || now - f.last >= SCAN_GAP_MS) fieldScan = f = { el: t, before: t.value, text: "", last: now };
+    f.text += e.key; f.last = now;
+  }
   document.addEventListener("keydown", function (e) {
     var t = e.target;
     if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA")) {
-      if (t.getClientRects().length) return;   // 화면에 보이는 입력칸에 입력 중
+      if (t.getClientRects().length) { fieldKey(e, t); return; }   // 화면에 보이는 입력칸에 입력 중
       t.blur();                                 // 닫힌 창의 입력칸에 커서가 남아 있으면 스캐너 입력을 가로챔
     }
     // 스캐너 끝의 Enter 가 마지막으로 누른 버튼(예: 스캔 탭)을 다시 누르면 결과가 지워지므로 기본 동작을 막음
@@ -2436,6 +2457,7 @@
       '</div>' +
       (daemonStale() ? '<div class="notice">' + esc(daemonWhy()) + '. 지금은 위치 변경을 저장할 수 없습니다.</div>' : '') +
       '<p class="footnote">새 위치 라벨을 스캔해도 됩니다. 저장하면 DMS에 변경을 요청하고, 보통 몇 초 안에 반영됩니다. DMS 데이터 갱신 중이면 몇 분 걸릴 수 있습니다.</p>' +
+      '<div class="notice warn" id="newLocWarn" hidden></div>' +
       '<button class="btn-primary" id="saveMove" data-pn="' + esc(pn) + '" disabled>저장</button>'
     );
   }
@@ -2505,7 +2527,18 @@
     if (el.id === "clearCheck") { openResolve(Number(el.getAttribute("data-id"))); return; }
     if (el.hasAttribute("data-resolve")) { clearCheck(Number(el.getAttribute("data-id")), el.getAttribute("data-resolve")); return; }
     if (el.id === "logHist") { loadCheckHist(); return; }
-    if (el.id === "saveMove") { saveMove(el.getAttribute("data-pn")); return; }
+    if (el.id === "saveMove") {
+      var nlv = normCode($("newLoc").value);
+      // 손으로 친 위치가 지금 부품이 하나도 없는 위치면 오타일 수 있어 한 번 더 확인
+      if (!$("newLoc").getAttribute("data-scanned") && !(state.locs[nlv] && state.locs[nlv].length) && !el.getAttribute("data-confirm")) {
+        $("newLocWarn").innerHTML = '<b class="mono-loc">' + esc(nlv) + '</b> 에는 지금 부품이 하나도 없습니다. 위치 번호가 맞는지 확인하세요. 맞으면 한 번 더 누르세요.';
+        $("newLocWarn").hidden = false;
+        el.setAttribute("data-confirm", "1"); el.textContent = "이 위치로 저장";
+        buzz();
+        return;
+      }
+      saveMove(el.getAttribute("data-pn")); return;
+    }
     if (el.id === "unknownLookup") { lookupUnknown(el.getAttribute("data-pn"), el); return; }
     if (el.hasAttribute("data-logitem")) {
       var c = state.checks.filter(function (x) { return x.id === Number(el.getAttribute("data-logitem")); })[0];
@@ -2600,6 +2633,9 @@
     if (e.target.id === "newLoc") {
       var v = normCode(e.target.value), pn = $("saveMove").getAttribute("data-pn");
       $("saveMove").disabled = !looksLoc(v) || v === state.parts[pn].lct_cd;
+      if (e.target.getAttribute("data-scanned") !== v) e.target.removeAttribute("data-scanned");   // 스캔한 뒤 손으로 고치면 손 입력
+      $("saveMove").removeAttribute("data-confirm"); $("saveMove").textContent = "저장";
+      if ($("newLocWarn")) $("newLocWarn").hidden = true;
     }
   });
   document.addEventListener("change", function (e) {
