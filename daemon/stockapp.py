@@ -600,7 +600,8 @@ def _lookup(page, branch: str, pn: str, update_part: bool) -> dict:
 _SELECT_JS = """
 async (pn) => {
   const sleep = (ms) => new Promise(r => setTimeout(r, ms));
-  const grid = $("#itemGrid").data("kendoExtGrid");
+  const grid = window.$ && $("#itemGrid").data("kendoExtGrid");
+  if (!grid || !document.getElementById("btnSearch")) return {ok: false, notReady: true, reason: "재고마스터 화면이 아직 준비되지 않음"};
   grid.dataSource.data([]);
   $("#sItemCd").val(pn);
   document.getElementById("btnSearch").click();
@@ -667,20 +668,31 @@ def _other_changes(a: dict, b: dict) -> dict:
     return out
 
 
+_GRID_READY_JS = """() => !!(window.$ && $("#itemGrid").data("kendoExtGrid") && document.getElementById("btnSearch")
+                              && document.getElementById("btnSave1") && typeof masterData === "function")"""
+
+
 def _stock_master_frame(page):
     page.evaluate("""() => {
         const a = [...document.querySelectorAll('a[data-url]')].find(x => x.textContent.trim() === '재고마스터');
         if (!a) throw new Error('재고마스터 메뉴를 찾지 못했습니다');
         a.click();
     }""")
-    deadline = time.time() + 20
+    # 메뉴를 처음 열거나 탭이 새로 뜨면 주소는 바로 잡혀도 화면(조회 표·버튼)이 늦게 준비됨 → 표가 생길 때까지 기다림
+    #   (2026-10-14 13:19 #415: 주소만 보고 1초 뒤 조회해 'grid 없음'으로 실패. 저장 전 단계라 DMS 는 그대로였음)
+    deadline = time.time() + 30
     while time.time() < deadline:
         for f in page.frames:
-            if "selectItemStockMaster" in f.url:
-                page.wait_for_timeout(1000)
-                return f
+            if "selectItemStockMaster" not in f.url:
+                continue
+            try:
+                if f.evaluate(_GRID_READY_JS):
+                    page.wait_for_timeout(500)
+                    return f
+            except Exception:
+                pass   # 화면을 다시 불러오는 중이거나 닫힌 탭의 창 — 다음 차례에 다시 봄
         page.wait_for_timeout(300)
-    raise RuntimeError("재고마스터 화면을 찾지 못했습니다")
+    raise RuntimeError("재고마스터 화면이 준비되지 않았습니다. 잠시 뒤 다시 시도하세요")
 
 
 def _loc_change(page, branch: str, pn: str, params: dict, who) -> dict:
@@ -693,6 +705,9 @@ def _loc_change(page, branch: str, pn: str, params: dict, who) -> dict:
     c = _cfg()
     frame = _stock_master_frame(page)
     r0 = frame.evaluate(_SELECT_JS, pn)
+    if r0.get("notReady"):   # 그 사이 화면이 다시 뜬 경우 한 번 더
+        frame = _stock_master_frame(page)
+        r0 = frame.evaluate(_SELECT_JS, pn)
     if not r0.get("ok"):
         raise RuntimeError(r0.get("reason"))
     cur = (r0["item"].get("lctCd") or "").strip()
