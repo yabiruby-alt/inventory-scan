@@ -2426,7 +2426,7 @@
         (rr ? '<div class="row"><div class="row-main">RR 수량</div><span class="row-value qty" style="font-size:var(--fs-xl)">' + qtyNum(rr) + '</span></div>' +
           '<div class="row"><div class="row-main">합계</div><span class="row-value qty" style="font-size:var(--fs-xl);font-weight:700">' + qtyNum(Number(p.crt_qty) + rr) + '</span></div>' : '') +
         '<div class="row stepper"><div class="row-main">실사 수량</div><div class="stepper-ctl"><button type="button" data-step="-1" aria-label="하나 빼기">−</button><input id="countIn" type="text" inputmode="numeric" autocomplete="off" class="qty-in" value="' + qtyNum(start) + '" aria-label="실사 수량"><button type="button" data-step="1" aria-label="하나 더하기">+</button></div></div>' +
-        '<div class="row"><textarea class="field" id="memoIn" rows="2" placeholder="메모 (선택)" aria-label="메모">' + esc(c ? c.memo : "") + '</textarea></div>' +
+        '<div class="row"><textarea class="field" id="memoIn" rows="2" placeholder="사유 (예: 파손, 다른 위치에서 발견, 오출고 추정)" aria-label="사유">' + esc(c ? c.memo : "") + '</textarea></div>' +
       '</div>' +
       '<p class="footnote" id="diffHint"></p>' +
       '<button class="btn-primary" id="saveCheck" data-pn="' + esc(pn) + '">저장</button>' +
@@ -2460,6 +2460,28 @@
       '<div class="notice warn" id="newLocWarn" hidden></div>' +
       '<button class="btn-primary" id="saveMove" data-pn="' + esc(pn) + '" disabled>저장</button>'
     );
+  }
+
+  // 수량 다름 저장 때 사유(메모)를 안 적었으면 한 번 묻기: 첫 누름은 안내 + 버튼이 "사유 없이 저장"으로 바뀌고, 한 번 더 누르면 저장
+  function memoOk(btn, memo) {
+    if (!memo || memo.value.trim() || btn.getAttribute("data-nomemo")) return true;
+    btn.setAttribute("data-nomemo", "1");
+    btn.setAttribute("data-label", btn.textContent);
+    btn.textContent = "사유 없이 저장";
+    var w = document.createElement("div");
+    w.className = "notice"; w.id = "memoWarn";
+    w.textContent = "사유를 적지 않았습니다. 사유 없이 저장하시겠습니까? 사유는 보고서와 체크 기록에 남습니다.";
+    btn.parentNode.insertBefore(w, btn);
+    buzz();
+    memo.scrollIntoView({ block: "nearest" });
+    return false;
+  }
+  function memoTyped(memo) {   // 사유를 적기 시작하면 원래 버튼으로
+    var btn = memo.id === "aMemoIn" ? $("aDiffSave") : $("saveCheck");
+    if (!btn || !btn.getAttribute("data-nomemo")) return;
+    btn.removeAttribute("data-nomemo");
+    btn.textContent = btn.getAttribute("data-label") || "저장";
+    if ($("memoWarn")) $("memoWarn").remove();
   }
 
   // ---------- 이벤트 ----------
@@ -2522,7 +2544,7 @@
       updateHint(state.parts[$("saveCheck").getAttribute("data-pn")]);
       return;
     }
-    if (el.id === "saveCheck") { saveCheck(el.getAttribute("data-pn")); return; }
+    if (el.id === "saveCheck") { if (memoOk(el, $("memoIn"))) saveCheck(el.getAttribute("data-pn")); return; }
     if (el.hasAttribute("data-clear")) { openResolve(Number(el.getAttribute("data-clear"))); return; }
     if (el.id === "clearCheck") { openResolve(Number(el.getAttribute("data-id"))); return; }
     if (el.hasAttribute("data-resolve")) { clearCheck(Number(el.getAttribute("data-id")), el.getAttribute("data-resolve")); return; }
@@ -2585,6 +2607,7 @@
     if (el.id === "aDiffSave") {
       var apn = el.getAttribute("data-pn"), av = parseFloat($("aCountIn").value), ait = findAuditItem(apn);
       if (isNaN(av)) { toast("실사 수량을 입력하세요"); return; }
+      if (av !== itemTotal(ait) && !memoOk(el, $("aMemoIn"))) return;
       el.disabled = true;
       if (av === itemTotal(ait)) { markAudit(apn, "ok", null); return; }
       markAudit(apn, "diff", av, $("aMemoIn").value.trim());
@@ -2630,6 +2653,7 @@
     if (e.target.id === "moveSearch") { state.moveQ = e.target.value; $("moveList").innerHTML = moveRows(); }
     if (e.target.classList.contains("qty-in") && /[^0-9.]/.test(e.target.value)) e.target.value = e.target.value.replace(/[^0-9.]/g, "");   // 소수 수량(오일 등)은 그대로
     if (e.target.id === "countIn") updateHint(state.parts[$("saveCheck").getAttribute("data-pn")]);
+    if (e.target.id === "aMemoIn" || e.target.id === "memoIn") memoTyped(e.target);
     if (e.target.id === "newLoc") {
       var v = normCode(e.target.value), pn = $("saveMove").getAttribute("data-pn");
       $("saveMove").disabled = !looksLoc(v) || v === state.parts[pn].lct_cd;
