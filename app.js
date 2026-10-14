@@ -1752,7 +1752,12 @@
     try {
       var m = await sb.from("inv_requests").select("item_cd,params,status,error,requested_by_name,requested_at,finished_at")
         .eq("kind", "loc_change").in("status", ["done", "failed"]).gte("requested_at", a.started_at).lte("requested_at", a.finished_at || new Date().toISOString()).order("requested_at");
-      if (!m.error) out.moves = m.data.filter(function (r) { return r.status === "done" || r.status === "failed"; }).map(function (r) {
+      // 실패한 요청은 그 뒤 같은 부품이 완료됐으면 빼고(다시 해서 바뀜), 끝까지 실패로 남은 것만 보여 줌
+      var doneAt = {};
+      if (!m.error) m.data.forEach(function (r) { if (r.status === "done" && (!doneAt[r.item_cd] || r.requested_at > doneAt[r.item_cd])) doneAt[r.item_cd] = r.requested_at; });
+      if (!m.error) out.moves = m.data.filter(function (r) {
+        return r.status === "done" || (r.status === "failed" && !(doneAt[r.item_cd] && doneAt[r.item_cd] > r.requested_at));
+      }).map(function (r) {
         return { at: r.finished_at || r.requested_at, item_cd: r.item_cd, item_nm: nameOf(r.item_cd), from: (r.params && r.params.from) || "", to: (r.params && r.params.to) || "", by: r.requested_by_name, status: r.status, error: r.error };
       });
     } catch (e) { /* 이 구역만 빠짐 */ }
