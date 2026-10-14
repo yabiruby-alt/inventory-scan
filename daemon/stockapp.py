@@ -597,28 +597,44 @@ def _lookup(page, branch: str, pn: str, update_part: bool) -> dict:
 
 # ---- 위치 변경: 재고마스터 화면에서 사람이 하는 순서 그대로 (조회 → 줄 선택 → 로케이션코드만 수정 → 저장) ----
 
+# 고정 대기 대신 "준비되면 바로" (2026-10-14, 한 건 약 5.7초 → 목표 3초 이하)
+#   - 화면이 서버와 주고받는 중($.active)이면 끝날 때까지 기다린 뒤 조회
+#   - 줄 선택 뒤 입력칸 채움은 masterData() 가 두 번 연달아 같고(150ms 간격) 통신이 없을 때 완료로 봄 (예전: 무조건 0.8초)
+#   - 저장 뒤 확인(select=false)은 줄 선택 없이 조회 결과만 봄 (확인에는 입력칸이 필요 없음)
 _SELECT_JS = """
-async (pn) => {
+async ({pn, select}) => {
   const sleep = (ms) => new Promise(r => setTimeout(r, ms));
   const grid = window.$ && $("#itemGrid").data("kendoExtGrid");
   if (!grid || !document.getElementById("btnSearch")) return {ok: false, notReady: true, reason: "재고마스터 화면이 아직 준비되지 않음"};
+  const idle = async (ms) => { for (let i = 0; i < ms / 50 && $.active > 0; i++) await sleep(50); };
+  await idle(10000);
   grid.dataSource.data([]);
   $("#sItemCd").val(pn);
   document.getElementById("btnSearch").click();
   let rows = [];
-  for (let i = 0; i < 80; i++) {
-    await sleep(250);
+  for (let i = 0; i < 200; i++) {
+    await sleep(100);
     rows = grid.dataSource.data().filter(x => x.itemCd === pn);
-    if (rows.length) break;
+    if (rows.length && !($.active > 0)) break;
   }
   if (rows.length !== 1) return {ok: false, reason: "재고마스터 조회 결과 " + rows.length + "건"};
+  const item = JSON.parse(JSON.stringify(rows[0].toJSON()));
+  if (!select) return {ok: true, item};
   const tr = grid.tbody.find("tr[data-uid='" + rows[0].uid + "']");
   grid.select(tr);
   grid.trigger("change");
-  for (let i = 0; i < 40 && $("#itemCd").val() !== pn; i++) await sleep(250);
+  for (let i = 0; i < 100 && $("#itemCd").val() !== pn; i++) await sleep(100);
   if ($("#itemCd").val() !== pn) return {ok: false, reason: "입력칸이 채워지지 않음"};
-  await sleep(800);
-  return {ok: true, item: JSON.parse(JSON.stringify(rows[0].toJSON()))};
+  // 입력칸이 다 채워질 때까지: 통신이 없고 masterData() 가 150ms 간격으로 두 번 같으면 완료 (최대 5초)
+  let prev = "", same = 0;
+  for (let i = 0; i < 34 && same < 1; i++) {
+    await sleep(150);
+    if ($.active > 0) { same = 0; prev = ""; continue; }
+    const cur = JSON.stringify(masterData());
+    if (cur === prev && JSON.parse(cur).itemCd === pn) same++; else { same = 0; prev = cur; }
+  }
+  if (same < 1) return {ok: false, reason: "입력칸이 다 채워지지 않음"};
+  return {ok: true, item};
 }
 """
 
@@ -687,7 +703,6 @@ def _stock_master_frame(page):
                 continue
             try:
                 if f.evaluate(_GRID_READY_JS):
-                    page.wait_for_timeout(500)
                     return f
             except Exception:
                 pass   # 화면을 다시 불러오는 중이거나 닫힌 탭의 창 — 다음 차례에 다시 봄
@@ -696,6 +711,7 @@ def _stock_master_frame(page):
 
 
 def _loc_change(page, branch: str, pn: str, params: dict, who) -> dict:
+    t0 = time.time()
     if LOC_HALT.exists():
         raise RuntimeError("위치 변경이 일시 중지된 상태입니다 (관리자 확인 필요)")
     to = str(params.get("to") or "").strip().upper()
@@ -704,10 +720,10 @@ def _loc_change(page, branch: str, pn: str, params: dict, who) -> dict:
         raise ValueError(f"위치 형식이 아닙니다: {to}")
     c = _cfg()
     frame = _stock_master_frame(page)
-    r0 = frame.evaluate(_SELECT_JS, pn)
+    r0 = frame.evaluate(_SELECT_JS, {"pn": pn, "select": True})
     if r0.get("notReady"):   # 그 사이 화면이 다시 뜬 경우 한 번 더
         frame = _stock_master_frame(page)
-        r0 = frame.evaluate(_SELECT_JS, pn)
+        r0 = frame.evaluate(_SELECT_JS, {"pn": pn, "select": True})
     if not r0.get("ok"):
         raise RuntimeError(r0.get("reason"))
     cur = (r0["item"].get("lctCd") or "").strip()
@@ -721,8 +737,7 @@ def _loc_change(page, branch: str, pn: str, params: dict, who) -> dict:
         if s.get("saved") or s.get("dialogVisible"):
             LOC_HALT.write_text(f"{_now_iso()} {pn} 저장 응답 이상: {s}\n", encoding="utf-8")
         raise RuntimeError(s.get("reason") or f"DMS 저장 실패: {s.get('save')}")
-    page.wait_for_timeout(1500)
-    r1 = frame.evaluate(_SELECT_JS, pn)
+    r1 = frame.evaluate(_SELECT_JS, {"pn": pn, "select": False})   # 저장 통신이 끝나길 기다린 뒤 다시 조회해 확인
     got = ((r1.get("item") or {}).get("lctCd") or "").strip()
     other = _other_changes(r0["item"], r1.get("item") or {})
     # 재고마스터 화면 저장이 원래 비우는 값 (직원이 화면에서 직접 저장해도 같음, 사용자 승인 2026-10-07)
@@ -736,5 +751,5 @@ def _loc_change(page, branch: str, pn: str, params: dict, who) -> dict:
     _rest("PATCH", f"inv_parts?branch=eq.{_q(branch)}&item_cd=eq.{_q(pn)}", {"lct_cd": to, "updated_at": _now_iso()})
     if pn in _S.parts_sent:
         _S.parts_sent[pn] = dict(_S.parts_sent[pn], lct_cd=to)
-    _log(f"위치 변경 {pn}: {cur or '공란'} → {to} ({who})" + (f" / 화면 저장으로 비워진 값 {allowed}" if allowed else ""))
+    _log(f"위치 변경 {pn}: {cur or '공란'} → {to} ({who}, DMS {time.time() - t0:.1f}초)" + (f" / 화면 저장으로 비워진 값 {allowed}" if allowed else ""))
     return {"from": cur, "to": to}
