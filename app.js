@@ -2149,8 +2149,66 @@
   window.addEventListener("online", renderNet);
 
   function render(resetScroll) {
-    try { renderView(resetScroll); } finally { renderMoveBar(); trackPresence(); }
+    try { renderView(resetScroll); } finally { renderMoveBar(); trackPresence(); syncWake(); }
   }
+
+  // ---------- 재고조사 중 화면 꺼짐 방지 (Screen Wake Lock) ----------
+  //   조사 목록을 열어 둔 동안만 켬. 다른 탭으로 가거나 앱을 내리면 풀림(앱으로 돌아오면 다시 켬)
+  var wakeLock = null, wakeAsking = false;
+  function wantWake() { return !!state.user && state.tab === "audit" && !!state.auditOpen && document.visibilityState === "visible"; }
+  async function syncWake() {
+    if (!("wakeLock" in navigator) || wakeAsking) return;
+    if (wantWake() && !wakeLock) {
+      wakeAsking = true;
+      try {
+        var w = await navigator.wakeLock.request("screen");
+        w.addEventListener("release", function () { if (wakeLock === w) wakeLock = null; });
+        wakeLock = w;
+      } catch (e) { wakeLock = null; }   // 절전 모드 등으로 거절되면 그냥 둠
+      wakeAsking = false;
+      if (!wantWake()) syncWake();   // 받는 사이 조사 화면을 벗어남
+    } else if (!wantWake() && wakeLock) {
+      var old = wakeLock; wakeLock = null;
+      old.release().catch(function () {});
+    }
+  }
+  document.addEventListener("visibilitychange", syncWake);
+
+  // ---------- 부품번호 길게 눌러 복사 ----------
+  //   목록·부품 화면·재고 확인 창의 부품번호를 0.5초 누르고 있으면 클립보드에 복사 (DMS 등에 붙여넣기). 누른 뒤의 탭 동작은 막음
+  var COPY_SEL = ".pn, .ai-pn, .rtitle.mono", lpTimer = null, lpStart = null, lpFired = false;
+  function copyCode(code) {
+    var done = function () { beep(); toast("복사했습니다 · " + code); };
+    var fallback = function () {
+      var t = document.createElement("textarea");
+      t.value = code; t.setAttribute("readonly", ""); t.style.cssText = "position:fixed;left:-9999px;top:0";
+      document.body.appendChild(t); t.select();
+      var ok = false; try { ok = document.execCommand("copy"); } catch (e) { ok = false; }
+      t.remove();
+      if (ok) done(); else toast("복사하지 못했습니다");
+    };
+    if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(code).then(done, fallback);
+    else fallback();
+  }
+  function lpCancel() { clearTimeout(lpTimer); lpTimer = null; lpStart = null; }
+  document.addEventListener("pointerdown", function (e) {
+    lpCancel(); lpFired = false;
+    var el = e.target.closest && e.target.closest(COPY_SEL);
+    if (!el) return;
+    var code = ((el.textContent || "").trim().match(/^[0-9A-Z]+/) || [])[0];   // 뒤에 붙은 '이월' 표시 등은 뺌
+    if (!code || code.length < 5) return;
+    lpStart = { x: e.clientX, y: e.clientY };
+    lpTimer = setTimeout(function () { lpTimer = null; lpFired = true; copyCode(code); }, 500);
+  });
+  document.addEventListener("pointermove", function (e) {
+    if (lpStart && Math.abs(e.clientX - lpStart.x) + Math.abs(e.clientY - lpStart.y) > 12) lpCancel();   // 스크롤이면 취소
+  });
+  document.addEventListener("pointerup", function () { clearTimeout(lpTimer); lpTimer = null; });
+  document.addEventListener("pointercancel", lpCancel);
+  document.addEventListener("click", function (e) {   // 길게 눌러 복사한 뒤 손을 떼면서 생기는 탭(부품 열기 등)은 무시
+    if (lpFired) { lpFired = false; e.preventDefault(); e.stopPropagation(); }
+  }, true);
+  document.addEventListener("contextmenu", function (e) { if (e.target.closest && e.target.closest(COPY_SEL)) e.preventDefault(); });
   function renderView(resetScroll) {
     var nav = $("nav"), content = $("content");
     if (!state.user) {
