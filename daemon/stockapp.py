@@ -490,8 +490,35 @@ def poll(page) -> None:
         if reqs:
             _S.last_req_at = t   # 쓰는 중: 이어지는 요청은 1초마다 확인
             _handle(page, branch, reqs[0])
+        else:
+            _prewarm_stock_master(page)
     except Exception as e:
         _log(f"요청 확인 실패: {type(e).__name__}: {e}")
+
+
+# 재고마스터 화면 미리 열어 두기 (2026-10-14): 데몬은 10분 주기마다 DMS 첫 화면을 다시 불러와 메뉴 탭이 모두 닫히므로,
+#   주기 뒤 첫 위치 변경이 화면을 새로 여느라 늦어짐 → 요청이 없을 때 재고마스터 탭이 없으면 한 번 열어 둠.
+#   1분에 한 번만 확인하고(열려 있으면 DMS 요청 없음), 위치 변경이 멈춘 상태면 하지 않음. 실패해도 위치 변경 때 다시 염
+PREWARM_EVERY_SEC = 60
+
+
+def _prewarm_stock_master(page) -> None:
+    t = time.time()
+    if t - getattr(_S, "prewarm_at", 0.0) < PREWARM_EVERY_SEC or LOC_HALT.exists():
+        return
+    _S.prewarm_at = t
+    for f in page.frames:
+        if "selectItemStockMaster" in f.url:
+            try:
+                if f.evaluate(_GRID_READY_JS):
+                    return   # 이미 열려 있음
+            except Exception:
+                pass
+    try:
+        _stock_master_frame(page)
+        _S.prewarm_count = getattr(_S, "prewarm_count", 0) + 1
+    except Exception as e:
+        _log(f"재고마스터 미리 열기 실패(위치 변경 때 다시 엶): {type(e).__name__}: {e}")
 
 
 def _finish(req_id: int, status: str, result=None, error=None) -> None:
