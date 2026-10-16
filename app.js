@@ -1835,12 +1835,12 @@
     try { extra = await loadReportExtras(a); } catch (e) { extra = {}; }
     clearTimeout(slow); reportOpening = false;
     var pages = AuditReport.pages(reportData(a, state.auditItems, extra));
-    // 맨 뒤 '현장 확인용' 별지(조사 중 위치 변경)는 미리보기에만 — 제출용 PDF 에는 넣지 않음
-    var pdfPages = pages.filter(function (p) { return p.indexOf('class="rp-page apx"') < 0; }), apxN = pages.length - pdfPages.length;
+    // 맨 뒤 '현장 확인용' 별지(조사 중 위치 변경)도 PDF 에 함께 넣음 — 인쇄해서 현장에서 확인하고, 제출할 때는 그 쪽만 빼면 됨
+    var pdfPages = pages, apxN = pages.filter(function (p) { return p.indexOf('class="rp-page apx"') >= 0; }).length;
     report = { file: null, error: "", name: reportFileName(a) };
     var el = document.createElement("div");
     el.id = "reportView"; el.className = "reportview";
-    el.innerHTML = '<div class="rv-bar"><button class="rv-close" id="rvClose">닫기</button><b>보고서 미리보기</b><span class="rv-n">' + pdfPages.length + '쪽' + (apxN ? ' + 현장 확인용 ' + apxN + '쪽' : '') + '</span></div>' +
+    el.innerHTML = '<div class="rv-bar"><button class="rv-close" id="rvClose">닫기</button><b>보고서 미리보기</b><span class="rv-n">' + (pages.length - apxN) + '쪽' + (apxN ? ' + 현장 확인용 ' + apxN + '쪽' : '') + '</span></div>' +
       '<div class="rv-scroll" id="rvScroll"><div class="rv-pages" id="rvPages">' + pages.join("") + '</div></div>' +
       '<div class="rv-panel">' +
         '<div class="rv-name"><input id="rvName" value="' + esc(report.name) + '" aria-label="파일 이름" autocomplete="off"><span>.pdf</span></div>' +
@@ -1849,7 +1849,7 @@
           '<a class="btn-primary rv-chrome" id="rvChrome" href="' + esc(chromeUrl()) + '" hidden>크롬에서 열기</a></div>' +
         '<button class="btn-primary" id="rvShare" style="margin-top:8px">OneDrive 에 PDF 저장</button>' +
         '<button class="btn-ghost" id="rvDownload">기기에 내려받기</button>' +
-        '<p class="footnote">공유 메뉴에서 OneDrive 를 고른 뒤 저장할 폴더를 고르세요.' + (apxN ? ' 맨 뒤 "현장 확인용" 쪽(조사 중 위치 변경)은 PDF 에 들어가지 않습니다.' : '') + '</p>' +
+        '<p class="footnote">공유 메뉴에서 OneDrive 를 고른 뒤 저장할 폴더를 고르세요.' + (apxN ? ' 맨 뒤 "현장 확인용" 쪽(조사 중 위치 변경)도 PDF 에 들어갑니다. 인쇄해 현장 확인에 쓰고, 보고할 때는 그 쪽만 빼고 제출하세요.' : '') + '</p>' +
       '</div>';
     $("app").appendChild(el);
     var fit = function () { if ($("rvPages")) $("rvPages").style.zoom = Math.min(1, ($("rvScroll").clientWidth - 24) / (210 * 96 / 25.4)); };
