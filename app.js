@@ -1835,10 +1835,12 @@
     try { extra = await loadReportExtras(a); } catch (e) { extra = {}; }
     clearTimeout(slow); reportOpening = false;
     var pages = AuditReport.pages(reportData(a, state.auditItems, extra));
+    // 맨 뒤 '현장 확인용' 별지(조사 중 위치 변경)는 미리보기에만 — 제출용 PDF 에는 넣지 않음
+    var pdfPages = pages.filter(function (p) { return p.indexOf('class="rp-page apx"') < 0; }), apxN = pages.length - pdfPages.length;
     report = { file: null, error: "", name: reportFileName(a) };
     var el = document.createElement("div");
     el.id = "reportView"; el.className = "reportview";
-    el.innerHTML = '<div class="rv-bar"><button class="rv-close" id="rvClose">닫기</button><b>보고서 미리보기</b><span class="rv-n">' + pages.length + '쪽</span></div>' +
+    el.innerHTML = '<div class="rv-bar"><button class="rv-close" id="rvClose">닫기</button><b>보고서 미리보기</b><span class="rv-n">' + pdfPages.length + '쪽' + (apxN ? ' + 현장 확인용 ' + apxN + '쪽' : '') + '</span></div>' +
       '<div class="rv-scroll" id="rvScroll"><div class="rv-pages" id="rvPages">' + pages.join("") + '</div></div>' +
       '<div class="rv-panel">' +
         '<div class="rv-name"><input id="rvName" value="' + esc(report.name) + '" aria-label="파일 이름" autocomplete="off"><span>.pdf</span></div>' +
@@ -1847,7 +1849,7 @@
           '<a class="btn-primary rv-chrome" id="rvChrome" href="' + esc(chromeUrl()) + '" hidden>크롬에서 열기</a></div>' +
         '<button class="btn-primary" id="rvShare" style="margin-top:8px">OneDrive 에 PDF 저장</button>' +
         '<button class="btn-ghost" id="rvDownload">기기에 내려받기</button>' +
-        '<p class="footnote">공유 메뉴에서 OneDrive 를 고른 뒤 저장할 폴더를 고르세요.</p>' +
+        '<p class="footnote">공유 메뉴에서 OneDrive 를 고른 뒤 저장할 폴더를 고르세요.' + (apxN ? ' 맨 뒤 "현장 확인용" 쪽(조사 중 위치 변경)은 PDF 에 들어가지 않습니다.' : '') + '</p>' +
       '</div>';
     $("app").appendChild(el);
     var fit = function () { if ($("rvPages")) $("rvPages").style.zoom = Math.min(1, ($("rvScroll").clientWidth - 24) / (210 * 96 / 25.4)); };
@@ -1856,7 +1858,7 @@
     // 공유 메뉴는 버튼을 누른 직후에만 열리므로 PDF 를 미리 만들어 둔다
     var mine = report;
     setTimeout(function () {
-      AuditReport.buildPdf(pages, mine.name, function (n, total) { if (report === mine) $("rvState").textContent = "PDF 만드는 중… " + n + "/" + total + "쪽"; })
+      AuditReport.buildPdf(pdfPages, mine.name, function (n, total) { if (report === mine) $("rvState").textContent = "PDF 만드는 중… " + n + "/" + total + "쪽"; })
         .then(function (f) { mine.file = f; if (report === mine) $("rvState").textContent = "PDF 준비됨 · " + (f.size / 1024 / 1024).toFixed(1) + "MB"; })
         .catch(function (e) { mine.error = e.message; if (report === mine) { $("rvState").textContent = "PDF 를 만들지 못했습니다: " + e.message; $("rvState").classList.add("err"); } });
     }, 400);

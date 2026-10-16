@@ -34,6 +34,8 @@
     ".rp-page{box-sizing:border-box;position:relative;width:210mm;height:297mm;padding:14mm 14mm 16mm;background:#fff;color:#1b1f2a;overflow:hidden;color-scheme:only light;forced-color-adjust:none;",
     "font-family:-apple-system,'Noto Sans KR','Noto Sans CJK KR','Apple SD Gothic Neo','Malgun Gothic',sans-serif;font-size:8.5pt;line-height:1.4}",
     ".rp-page *{box-sizing:border-box}",
+    ".rp-apx{display:flex;justify-content:space-between;align-items:baseline;margin:0 0 4mm;padding:2.2mm 3mm;border:1px dashed #9aa0a8;border-radius:1.5mm;color:#555;font-size:8.5pt}",
+    ".rp-apx b{font-size:10pt;color:#222}",
     ".rp-foot{position:absolute;left:14mm;right:14mm;bottom:8mm;display:flex;justify-content:space-between;padding-top:1.6mm;border-top:.5px solid #c9ccd2;font-size:7pt;color:#8a8f98;line-height:1;letter-spacing:.02em}",
     // 머리: 소속 → 제목 → 기간, 오른쪽에 결재란, 아래에 이중선
     ".rp-top{display:flex;justify-content:space-between;align-items:flex-end;gap:6mm;margin:0 0 4mm}",
@@ -202,21 +204,6 @@
       } });
     } else out.push({ html: '<div class="rp-none">모두 확인했습니다</div>' });
 
-    // 조사 중 위치 변경: 조사 목록의 위치는 시작 때 기준이라, 조사하는 동안 옮긴 부품은 여기서 확인
-    var mv = d.moveItems || [];
-    if (mv.length) {
-      out.push({ keep: true, html: '<h2 class="rp-h">조사 중 위치 변경<em>' + mv.length + '건</em><span class="rp-hn">조사 목록의 위치는 시작 때 기준 · 옮긴 부품은 이 표 참고</span></h2>' });
-      out.push({ table: {
-        cls: "sm",
-        head: '<colgroup><col style="width:16mm"><col style="width:26mm"><col><col style="width:20mm"><col style="width:20mm"><col style="width:18mm"><col style="width:15mm"></colgroup>' +
-          '<thead><tr><th>시각</th><th>품번</th><th>품명</th><th>이전 위치</th><th>새 위치</th><th>요청자</th><th>결과</th></tr></thead>',
-        rows: mv.map(function (m) {
-          return '<tr><td class="t">' + hm(m.at) + '</td><td class="m k">' + esc(m.item_cd) + '</td><td>' + esc(m.item_nm) + '</td><td class="m k">' + esc(m.from || "-") + '</td><td class="m k">' + esc(m.to || "-") + '</td><td>' + esc(m.by || "") + '</td>' +
-            '<td' + (m.status === "done" ? '>완료' : ' class="neg">실패') + '</td></tr>';
-        })
-      } });
-    }
-
     // 지난 수량 다름 재확인: 지난 조사에서 수량이 달랐던 부품이 이번에는 어떻게 됐는지
     var rc = d.recheckItems || [], KIND = { daily: "일일", aging: "일일장기", weekly: "주간" };
     if (rc.length) {
@@ -264,6 +251,23 @@
       }
     }
 
+    // 조사 중 위치 변경: 보고서(앞장)와 분리해 맨 뒤 따로 쪽 — 지점장 보고에서 빼고 담당자·관리자 현장 확인용 (2026-10-16 결정)
+    out.push({ pageBreak: true });
+    out.push({ html: '<div class="rp-apx"><b>현장 확인용 · 보고 제외</b><span>' + esc(d.title) + ' · ' + esc(d.period) + '</span></div>' });
+    var mv = d.moveItems || [];
+    out.push({ keep: true, html: '<h2 class="rp-h">조사 중 위치 변경<em>' + mv.length + '건</em><span class="rp-hn">조사 목록의 위치는 시작 때 기준 · 조사하는 동안 옮긴 부품</span></h2>' });
+    if (mv.length) {
+      out.push({ table: {
+        cls: "sm",
+        head: '<colgroup><col style="width:16mm"><col style="width:26mm"><col><col style="width:20mm"><col style="width:20mm"><col style="width:18mm"><col style="width:15mm"></colgroup>' +
+          '<thead><tr><th>시각</th><th>품번</th><th>품명</th><th>이전 위치</th><th>새 위치</th><th>요청자</th><th>결과</th></tr></thead>',
+        rows: mv.map(function (m) {
+          return '<tr><td class="t">' + hm(m.at) + '</td><td class="m k">' + esc(m.item_cd) + '</td><td>' + esc(m.item_nm) + '</td><td class="m k">' + esc(m.from || "-") + '</td><td class="m k">' + esc(m.to || "-") + '</td><td>' + esc(m.by || "") + '</td>' +
+            '<td' + (m.status === "done" ? '>완료' : ' class="neg">실패') + '</td></tr>';
+        })
+      } });
+    } else out.push({ html: '<div class="rp-none">조사하는 동안 위치를 바꾼 부품이 없습니다</div>' });
+
     return out;
   }
 
@@ -287,6 +291,7 @@
     Object.assign(probe.style, { position: "fixed", left: "-20000px", top: "0", height: "auto", overflow: "visible" });
     document.body.appendChild(probe);
     var pages = [], cur = "", used = 0, held = null;   // held: 다음 블록과 같은 쪽에 놓아야 하는 제목
+    var apxAt = -1;   // 이 쪽부터는 보고서 밖(현장 확인용) — 쪽 번호를 따로 매김
     var flush = function () { if (cur) pages.push(cur); cur = ""; used = 0; };
     // 블록 하나를 단독으로 그렸을 때 차지하는 높이 (바깥 여백 포함: 위아래에 기준 선을 두고 잰다)
     var measure = function (html) {
@@ -297,6 +302,7 @@
     try {
       var takeHeld = function () { if (held) { cur += held.html; used += held.h; held = null; } };
       list.forEach(function (b) {
+        if (b.pageBreak) { takeHeld(); flush(); apxAt = pages.length; return; }
         if (b.keep) { held = { html: b.html, h: measure(b.html) }; return; }
         var lead = held ? held.h : 0;
         if (!b.table) {
@@ -337,8 +343,11 @@
     } finally {
       probe.remove();
     }
+    var mainN = apxAt < 0 ? pages.length : apxAt;
     return pages.map(function (html, i) {
-      return '<div class="rp-page">' + html + '<div class="rp-foot"><span>' + FOOTER + '</span><span>' + (i + 1) + ' / ' + pages.length + '</span></div></div>';
+      var apx = apxAt >= 0 && i >= apxAt;
+      return '<div class="rp-page' + (apx ? ' apx' : '') + '">' + html + '<div class="rp-foot"><span>' + (apx ? '현장 확인용 · 보고 제외 · ' : '') + FOOTER + '</span><span>' +
+        (apx ? '별지 ' + (i - apxAt + 1) + ' / ' + (pages.length - apxAt) : (i + 1) + ' / ' + mainN) + '</span></div></div>';
     });
   }
 
