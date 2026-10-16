@@ -699,6 +699,22 @@ async ({pn, loc, dealer, brch}) => {
 
 _VOLATILE = ("updt", "Updt", "regDt", "RegDt", "uid", "dirty")
 _SCREEN_CLEARS = ("preSplyCd", "sftyStockPrid")
+# 재고마스터 화면 저장이 보내는 항목 (DMS 화면 코드의 masterData()). 이 밖의 항목은 저장 때 DMS 가 빈 값으로 만듦
+#   (예: 2026-10-16 51127357150 주문단위 orderUnit 01 → 빈값. 직원이 DMS 화면에서 저장해도 같음, 값은 DMS 쪽에서 다시 채워지기도 함)
+#   사용자 결정(2026-10-16): 화면에 없는 항목이 '빈 값'으로 바뀌는 것은 허용. 화면 항목이 바뀌거나 다른 값으로 바뀌면 지금처럼 멈춤
+_SCREEN_FIELDS = frozenset((
+    "itemCd", "itemNm", "itemNmKor", "mnfItemCd", "minMrpQty", "maxMrpQty", "minOrderQty", "minSalesQty", "salesUnitQty",
+    "purcUnitQty", "retailPrcUnitQty", "purcEmQty", "orgPurcEmQty", "purcEmQtyRatio", "sftyStockQty", "whStrge", "dlvStrge",
+    "stockUnit", "lctCd", "splyCd", "preSplyCd", "demicYn", "stockBlMtItemYn", "nonMngItemAtcYn", "matPlanYn", "brchRemark",
+    "saleRemark", "purcRemark", "preItemCd", "spsItemCd", "spSaleStartDt", "spSaleEndDt", "spSaleDcRate", "dmndChainYn",
+    "dlrCd", "bizAreaCd", "brchCd", "orgStockBlMtItemYn", "crtQty"))
+
+
+def _screen_cleared(k: str, v) -> bool:
+    """저장 후 바뀐 값 중 화면 저장의 정상 동작으로 보는 것: 화면에 없는 항목이 빈 값으로, 이전보급코드 공백이 빈 값으로"""
+    if v[1] not in (None, ""):
+        return False
+    return k not in _SCREEN_FIELDS or (k == "preSplyCd" and str(v[0] or "").strip() == "")
 
 
 def _other_changes(a: dict, b: dict) -> dict:
@@ -769,7 +785,7 @@ def _loc_change(page, branch: str, pn: str, params: dict, who) -> dict:
     other = _other_changes(r0["item"], r1.get("item") or {})
     # 재고마스터 화면 저장이 원래 비우는 값 (직원이 화면에서 직접 저장해도 같음, 사용자 승인 2026-10-07)
     #   preSplyCd(이전보급코드): 공백 → 빈값 / sftyStockPrid(안전재고기간): 화면 저장 데이터에 없는 항목이라 빈값이 됨
-    allowed = {k: v for k, v in other.items() if k in _SCREEN_CLEARS and v[1] in (None, "")}
+    allowed = {k: v for k, v in other.items() if _screen_cleared(k, v)}
     other = {k: v for k, v in other.items() if k not in allowed}
     if not r1.get("ok") or got != to or other:
         LOC_HALT.write_text(f"{_now_iso()} {pn} 저장 후 확인 이상: 위치={got} 다른 변경={other}\n", encoding="utf-8")
