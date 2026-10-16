@@ -61,7 +61,7 @@ function check(name, ok, extra) { results.push((ok ? 'PASS ' : 'FAIL ') + name +
   let checks = [], nextCheckId = 1;
   let failAuditPatch = false;
   let rrErr = null, rrPartsAt = iso(now - 120000);
-  const reqPosts = [];
+  const reqPosts = [], seenPosts = [];
   const rrParts = [
     { item_cd: 'PN10000', item_nm: 'RR부품', lct_cd: 'R010101', crt_qty: 4 },
     { item_cd: 'QQ12345', item_nm: 'RR전용', lct_cd: 'R020202', crt_qty: 7 },
@@ -111,6 +111,7 @@ function check(name, ok, extra) { results.push((ok ? 'PASS ' : 'FAIL ') + name +
         return json(it);   // .single() → object
       }
     }
+    if (t === 'rpc/inv_stat_seen_push') { seenPosts.push(JSON.parse(req.postData())); return json(1); }
     if (t === 'inv_requests' && m === 'POST') { reqPosts.push(JSON.parse(req.postData())); return json({ id: 999 }, 201); }
     if (t === 'inv_requests' && m === 'GET' && u.searchParams.get('id') === 'eq.999') return json({ status: 'done', result: stockResult, error: null });
     if (t === 'inv_requests' && m === 'GET') return json(moveReqs);
@@ -188,6 +189,20 @@ function check(name, ok, extra) { results.push((ok ? 'PASS ' : 'FAIL ') + name +
   check('검색칸 포커스 유지', focused === 'locSearch', 'focus=' + focused);
   const after = await page.$$eval('#locList .prow', e => e.length);
   check('검색 결과 그대로 걸러짐', after === 10, 'rows=' + after + ' (전체 15)');
+
+  // ===== 부품 라인수: 바코드로 스캔한 부품만, 같은 부품은 여러 번 찍어도 한 번만 서버에 알림 =====
+  const scanP = async (code) => { await page.evaluate(() => document.activeElement && document.activeElement.blur()); await page.keyboard.type(code); await page.keyboard.press('Enter'); await page.waitForTimeout(200); };
+  await scanP('PN10003');
+  if (await page.isVisible('[data-close]')) await page.click('[data-close]');
+  await scanP('PN10003');
+  if (await page.isVisible('[data-close]')) await page.click('[data-close]');
+  await page.clock.fastForward(61000); await page.waitForTimeout(500);
+  const seenSent = seenPosts.reduce((a, p) => a.concat(p.p_rows.reduce((b, r) => b.concat(r.items), [])), []);
+  check('스캔한 부품이 오늘 본 부품으로 한 번만 전송 (부품번호만, 건수 아님)', seenSent.filter(c => c === 'PN10003').length === 1 && seenPosts.every(p => p.p_rows.every(r => /^\d{4}-\d\d-\d\d$/.test(r.d))), JSON.stringify(seenPosts));
+  const nSeen = seenPosts.length;
+  await page.clock.fastForward(61000); await page.waitForTimeout(300);
+  check('이미 보낸 부품은 다시 보내지 않음', seenPosts.length === nSeen, seenPosts.length + ' / ' + nSeen);
+  await page.fill('#manualInput', 'A140112'); await page.press('#manualInput', 'Enter'); await page.waitForSelector('#locList');
 
   // ===== 7a. 현재고 바뀐 것만 받기 =====
   const partsReqs = reqLog.filter(x => x.includes('inv_parts'));

@@ -17,6 +17,7 @@
 | **수량 다름 체크** 건수 (남아 있음 / 지움) | `inv_stat_daily` metric=`check` | result=open 은 아직 처리 안 한 건 |
 | 재고조사 **작업시간**, **시간당 처리 건수** | `inv_stat_active` | active_sec, checks / (active_sec/3600) |
 | 첫 확인·마지막 확인 시각 | `inv_stat_active` | first_at, last_at |
+| **스캔한 부품 라인수** (기간 안에 바코드로 한 번이라도 스캔한 서로 다른 부품, 같은 부품은 며칠을 찍어도 1라인) | rpc `inv_stat_lines(p_from, p_to)` → `branch, lines` / 날짜별은 `inv_stat_lines_daily` → `stat_date, branch, lines` | 지점 단위(사용자별 없음). 사용자별은 audit_check + spot_check 건수로 대신 (028) |
 | 조사별 **완료율**·미확인 건수 | `inv_stat_audits` | (ok+diff)/total, unchecked |
 | **일일 재고조사 누적 일수**, 일일장기 진행 일수 | `inv_stat_audits` | kind 별 ok+diff>0 인 조사 수 |
 | 조사별 참여 인원, 예외 확인 건수, 재고 0 제외 건수 | `inv_stat_audits` | workers, exempt, removed_zero |
@@ -72,6 +73,12 @@ const { data } = await supabase.rpc("inv_stat_audits", { p_from: "2026-10-01", p
 - **일일 재고조사를 누적 며칠 했는지** = `kind='daily'` 이고 `ok + diff > 0` 인 조사 수 (지점별). 종료까지 한 날만 세려면 `finished_at is not null`.
 - 완료율 = `(ok + diff) / total`. `unchecked` = 미확인, `exempt` = 예외로 확인한 건수, `removed_zero` = DMS 갱신 때 재고 0으로 목록에서 뺀 건수, `workers` = 참여 인원.
 - 일일장기(`aging`)는 하루 10건 무작위(확인 안 한 것은 다음 날 이월).
+
+## 4) 스캔한 부품 라인수 (028_stat_seen.sql, 2026-10-16)
+- `inv_stat_lines(p_from, p_to)`: 기간 안에 스캔한 **서로 다른 부품 수**(지점별). 기간을 어떻게 잡아도 같은 부품은 1라인.
+- `inv_stat_lines_daily(p_from, p_to)`: 날짜별로 그날 스캔한 서로 다른 부품 수. (이 값을 날짜별로 더하면 기간 라인수보다 커진다 — 기간 값은 반드시 `inv_stat_lines`로 받을 것)
+- 바코드(스캐너·카메라)로 찍은 부품만 센다. 손으로 친 조회, 위치 스캔, 재고 목록에 없는 부품은 세지 않는다. 시작일은 앱 반영일(그 전 값 없음).
+- 서버에는 지점·부품당 1줄 + 본 날짜 비트(부품번호 해시)만 있어 용량이 거의 늘지 않는다.
 
 ## 참고
 - 원본 건수 표 `inv_stat_counts`(스캔 수)는 모든 계정이 읽을 수 있지만, 위 함수로 충분하다. 쓰기는 앱의 `inv_stat_push` 로만.

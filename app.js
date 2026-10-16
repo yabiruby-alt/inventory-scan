@@ -374,7 +374,7 @@
 
     var via = fromCamera ? "camera" : fromScanner ? "scanner" : null;   // 손으로 친 것(null)은 현장 확인으로 안 침
     // 재고 확인 창이 잠겨 있으면: 그 위치·부품을 찍으면 열림
-    if (via && !$("sheet").hidden && $("aLock")) { countScan("audit", looksLoc(code) ? "loc" : "part", via); auditSheetScan(code, via); return; }
+    if (via && !$("sheet").hidden && $("aLock")) { countScan("audit", looksLoc(code) ? "loc" : "part", via, code); auditSheetScan(code, via); return; }
     // 위치 변경 창이 열려 있으면 스캔한 위치를 새 위치 칸에 넣음
     if (!$("sheet").hidden) {
       if ($("newLoc") && looksLoc(code)) { $("newLoc").value = code; $("newLoc").setAttribute("data-scanned", code); $("newLoc").dispatchEvent(new Event("input", { bubbles: true })); beep(); }
@@ -385,10 +385,10 @@
 
     if ($("reportView")) return;   // 보고서 미리보기 중
     if (state.tab === "audit" && state.auditOpen && currentAudit()) {
-      countScan("audit", findAuditItem(code) ? "part" : state.auditItems.some(function (x) { return atLoc(x, code); }) ? "loc" : "unknown", via);
+      countScan("audit", findAuditItem(code) ? "part" : state.auditItems.some(function (x) { return atLoc(x, code); }) ? "loc" : "unknown", via, code);
       auditScan(code, via); return;
     }
-    countScan("lookup", isLoc(code) ? "loc" : state.parts[code] ? "part" : "unknown", via);
+    countScan("lookup", isLoc(code) ? "loc" : state.parts[code] ? "part" : "unknown", via, code);
     if (via) sound(isLoc(code) || state.parts[code] || (/^[A-Z0-9]{5,20}$/.test(code) && !looksLoc(code)) ? "ok" : "err");
 
     var type = isLoc(code) ? "loc" : state.parts[code] ? "part" : null;
@@ -413,8 +413,16 @@
     if (!id) { id = "ph-" + Math.random().toString(36).slice(2, 10) + Date.now().toString(36); store.set("deviceId", id); }
     return id;
   }
-  function countScan(ctx, target, via) {
+  // 바코드로 스캔한 부품은 부품번호를 기기에 모아 두었다가(하루 한 번만) 서버에 "오늘 본 부품"으로 알림 → 대시보드의 부품 라인수.
+  // 서버는 지점·부품당 1줄에 본 날짜만 켜므로 몇 번을 찍어도, 며칠을 찍어도 기간 안에서는 1라인
+  var statSeen = store.get("statSeen", {});   // { '2026-10-16': { 부품번호: 0(안 보냄) | 1(보냄) } }
+  function trackSeen(code) {
+    var d = kstDate(), day = statSeen[d] || (statSeen[d] = {});
+    if (day[code] === undefined) { day[code] = 0; statDirty = true; store.set("statSeen", statSeen); }
+  }
+  function countScan(ctx, target, via, code) {
     if (!state.user) return;
+    if (target === "part" && via && via !== "manual" && code) trackSeen(code);
     var k = [kstDate(), state.user.id, ctx, target, via || "manual"].join("|");
     statCounts[k] = (statCounts[k] || 0) + 1;
     statDirty = true;
@@ -427,9 +435,25 @@
       var x = k.split("|");
       if (x[1] === uid) rows.push({ d: x[0], metric: "scan", ctx: x[2], target: x[3], via: x[4], n: statCounts[k] });
     });
-    if (!rows.length) { statDirty = false; return; }
+    var seenRows = [];   // 아직 안 보낸 "오늘 본 부품"
+    Object.keys(statSeen).forEach(function (d) {
+      var items = Object.keys(statSeen[d]).filter(function (c) { return statSeen[d][c] === 0; });
+      if (items.length) seenRows.push({ d: d, items: items });
+    });
+    if (!rows.length && !seenRows.length) { statDirty = false; return; }
     statSending = true; statDirty = false;
     try {
+      if (seenRows.length) {
+        var rs = await sb.rpc("inv_stat_seen_push", { p_rows: seenRows });
+        if (rs.error) statDirty = true;
+        else {
+          seenRows.forEach(function (x) { x.items.forEach(function (c) { statSeen[x.d][c] = 1; }); });
+          var t0 = kstDate(Date.now() - 2 * 86400000);   // 이틀 지난 날짜는 지움
+          Object.keys(statSeen).forEach(function (d) { if (d < t0) delete statSeen[d]; });
+          store.set("statSeen", statSeen);
+        }
+      }
+      if (!rows.length) { statSending = false; return; }
       var r = await sb.rpc("inv_stat_push", { p_device: statDevice(), p_rows: rows });
       if (r.error) statDirty = true;
       else {   // 보낸 것 중 지난 날짜는 지움 (오늘 것은 계속 누적해서 다시 보냄)
