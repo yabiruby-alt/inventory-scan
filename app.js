@@ -296,8 +296,16 @@
       .on("postgres_changes", { event: "UPDATE", schema: "public", table: "inv_requests" }, function (p) {
         var n = p.new || {}, k = reqKick[n.id];
         if (k && (n.status === "done" || n.status === "failed" || n.status === "cancelled")) k();
+        else if (n.kind === "loc_change" && n.status === "done" && n.result && n.result.to) applyMoved(n.item_cd, n.result.to);
       })
       .subscribe(function (st) { reqLive = st === "SUBSCRIBED"; });
+  }
+  function applyMoved(pn, to) {   // 다른 사람이 옮긴 위치를 현재고에 반영하고 화면 갱신
+    var p = state.parts[pn];
+    if (!p || p.lct_cd === to) return;
+    locRemove(p.lct_cd, pn); p.lct_cd = to; locAdd(to, pn);
+    if ($("sheet").hidden && (state.tab === "audit" || state.tab === "scan")) render(false);
+    else if (state.tab === "audit") peersDirty = true;
   }
   function dropReqChannel() { if (reqChannel) { sb.removeChannel(reqChannel); reqChannel = null; } reqLive = false; reqKick = {}; }
   function waitRequest(id, onDone) {
@@ -377,7 +385,7 @@
 
     if ($("reportView")) return;   // 보고서 미리보기 중
     if (state.tab === "audit" && state.auditOpen && currentAudit()) {
-      countScan("audit", findAuditItem(code) ? "part" : state.auditItems.some(function (x) { return x.lct_cd === code; }) ? "loc" : "unknown", via);
+      countScan("audit", findAuditItem(code) ? "part" : state.auditItems.some(function (x) { return atLoc(x, code); }) ? "loc" : "unknown", via);
       auditScan(code, via); return;
     }
     countScan("lookup", isLoc(code) ? "loc" : state.parts[code] ? "part" : "unknown", via);
@@ -1261,7 +1269,7 @@
 
   function auditRows(items, started) {
     var list = items.filter(function (it) {
-      if (state.auditLoc && it.lct_cd !== state.auditLoc) return false;
+      if (state.auditLoc && !atLoc(it, state.auditLoc)) return false;
       if (!started) return true;
       if (state.auditFilter === "left") return !it.status;
       if (state.auditFilter === "diff") return it.status === "diff";
@@ -1272,11 +1280,14 @@
       return '<div class="empty">' + msg + '</div>';
     }
     var html = "", cur = null, locN = {}, locLeftN = {};   // 위치별 전체·남은 건수 (줄마다 다시 세지 않게 한 번에)
-    items.forEach(function (x) { var l = x.lct_cd || ""; locN[l] = (locN[l] || 0) + 1; if (!x.status) locLeftN[l] = (locLeftN[l] || 0) + 1; });
+    items.forEach(function (x) { var l = curLoc(x); locN[l] = (locN[l] || 0) + 1; if (!x.status) locLeftN[l] = (locLeftN[l] || 0) + 1; });
+    // 위치가 바뀐 부품은 새 위치 묶음으로 옮겨 보여 줌 (나머지 순서는 그대로)
+    var order = {}; items.forEach(function (x, i) { order[x.item_cd] = i; });
+    list = list.slice().sort(function (a, b) { var la = curLoc(a), lb = curLoc(b); return la === lb ? order[a.item_cd] - order[b.item_cd] : (la || "~").localeCompare(lb || "~"); });
     // 화면 밖 묶음은 브라우저가 그리기를 미루게(content-visibility) — 긴 목록을 다시 그릴 때 가볍게. 묶음 높이는 줄 수로 어림
-    var listN = {}; list.forEach(function (x) { var l = x.lct_cd || ""; listN[l] = (listN[l] || 0) + 1; });
+    var listN = {}; list.forEach(function (x) { var l = curLoc(x); listN[l] = (listN[l] || 0) + 1; });
     list.forEach(function (it) {
-      var loc = it.lct_cd || "";
+      var loc = curLoc(it);
       if (loc !== cur) {
         if (cur !== null) html += '</div>';
         cur = loc;
@@ -1287,7 +1298,7 @@
         (it.status === "ok" ? '<span class="pill ok">일치</span>'
         : it.status === "diff" ? '<span class="pill warn">실사 ' + qtyNum(it.counted) + '</span>' : '');
       html += '<button class="row' + (it.status ? " done" : "") + '" data-aitem="' + esc(it.item_cd) + '"' + (started ? '' : ' disabled') + '>' +
-        '<div class="row-main"><div class="pn">' + esc(it.item_cd) + carryTag(it) + '</div><div class="row-sub">' + esc(it.item_nm) + (it.status && it.checked_by_name ? ' · ' + esc(it.checked_by_name) : '') + '</div>' + splitNote(it.qty, itemRr(it)) + movedNote(it) + '</div>' +
+        '<div class="row-main"><div class="pn">' + esc(it.item_cd) + carryTag(it) + '</div><div class="row-sub">' + (movedLoc(it) ? '<span class="moved-from">옮김 · 시작 때 ' + esc(it.lct_cd || "위치 없음") + '</span> ' : '') + esc(it.item_nm) + (it.status && it.checked_by_name ? ' · ' + esc(it.checked_by_name) : '') + '</div>' + splitNote(it.qty, itemRr(it)) + movedNote(it) + '</div>' +
         '<div class="qty">' + qtyNum(itemTotal(it)) + '<small>EA</small></div>' + mark + '</button>';
     });
     return html + '</div>';
@@ -1364,7 +1375,7 @@
     if (currentAudit().finished_at) { toast("종료된 조사입니다"); return; }
     var it = findAuditItem(code);
     if (it) { pushRecent(code); if (via) markScanned("#" + code, "part"); openAuditItem(code); return; }
-    var n = state.auditItems.filter(function (x) { return x.lct_cd === code; }).length;
+    var n = state.auditItems.filter(function (x) { return atLoc(x, code); }).length;
     if (n) {
       if (via) markScanned(code, via);
       state.auditLoc = code; state.auditFilter = "left";
@@ -1409,6 +1420,9 @@
   }
   // 조사 목록의 위치는 시작 때 기준. DMS 현재 위치가 그와 다르면(조사 중 옮김) 그 새 위치
   function movedLoc(it) { var p = state.parts[it.item_cd]; return p && p.lct_cd && p.lct_cd !== it.lct_cd ? p.lct_cd : null; }
+  // 목록·창에 보여 줄 위치: 조사 중 바뀐 DMS 위치(앱에서 옮김, 다른 직원이 옮김, DMS 에서 직접 바꿈 — 10분 갱신 때 반영)를 우선
+  function curLoc(it) { return movedLoc(it) || it.lct_cd || ""; }
+  function atLoc(it, loc) { return curLoc(it) === loc || (it.lct_cd || "") === loc; }   // 위치 라벨로 찾을 때는 시작 때 위치도
   function auditSheetScan(code, via) {
     var pn = $("aLock").getAttribute("data-pn"), it = findAuditItem(pn), nl = movedLoc(it);
     if (code === pn) { beep(); markScanned("#" + pn, "part"); openAuditItem(pn); return; }
@@ -1447,7 +1461,7 @@
     openSheet(
       '<div class="sheet-head"><button class="cancel" data-close>닫기</button><h2>재고 확인</h2><span></span></div>' +
       '<div class="ai-hero">' +
-        '<div class="ai-loc">' + PIN_ICON + '<span class="mono-loc">' + esc(it.lct_cd || "위치 없음") + '</span>' + carryTag(it) + '</div>' +
+        '<div class="ai-loc">' + PIN_ICON + '<span class="mono-loc">' + esc(curLoc(it) || "위치 없음") + '</span>' + (movedLoc(it) ? '<span class="moved-from">옮김 · 시작 때 ' + esc(it.lct_cd || "위치 없음") + '</span>' : '') + carryTag(it) + '</div>' +
         '<div class="ai-pn">' + esc(pn) + '</div>' +
         '<div class="ai-nm">' + esc(it.item_nm) + '</div>' +
         '<div class="ai-last lastaudit-line" data-last="' + esc(pn) + '" data-skip="' + esc(curA ? curA.id : "") + '">' + lastAuditHtml(pn, curA ? curA.id : null, false) + '</div>' +
@@ -1562,21 +1576,21 @@
     closeSheet(); render(false);
     if (res === "check") { toast("조사 결과는 저장했지만 체크 기록에 반영하지 못했습니다. 다시 저장해 주세요"); return; }
     // 부품 바코드를 찍어 확인했고 같은 위치에 남은 부품이 있으면 다음 부품 창을 띄우지 않음 (목록 순서대로 집지 않으므로 다음 것도 직접 찍음)
-    var sameLeft = state.auditItems.filter(function (x) { return x !== it && !x.status && (x.lct_cd || "") === (it.lct_cd || ""); }).length;
+    var sameLeft = state.auditItems.filter(function (x) { return x !== it && !x.status && curLoc(x) === curLoc(it); }).length;
     var byPart = pf.via === "part" && sameLeft > 0;
     toastUndo(pn + " · " + saved + (byPart ? " · 이 위치 남은 " + sameLeft + "건" : ""), function () { undoAudit(before); });
     if (!byPart && store.get("autoNext", true) && a.id === (currentAudit() || {}).id) goNext(it);
   }
   // 확인 뒤: 같은 위치의 다음 미확인 부품을 바로 엶. 위치를 다 끝냈으면 '위치 완료' 창 + 다음 위치 안내
   function goNext(it) {
-    var items = state.auditItems, i = items.indexOf(it), loc = it.lct_cd || "";
+    var items = state.auditItems, i = items.indexOf(it), loc = curLoc(it);
     var left = function (x) { return !x.status && x !== it; };
     var after = items.slice(i + 1).concat(items.slice(0, Math.max(i, 0)));
-    var same = after.filter(function (x) { return (x.lct_cd || "") === loc && left(x); })[0];
+    var same = after.filter(function (x) { return curLoc(x) === loc && left(x); })[0];
     if (same) { openAuditItem(same.item_cd); return; }
     var nx = after.filter(left)[0], rest = items.filter(left).length;
-    var nxLoc = nx ? nx.lct_cd || "" : null;
-    var nxN = nx ? items.filter(function (x) { return (x.lct_cd || "") === nxLoc && left(x); }).length : 0;
+    var nxLoc = nx ? curLoc(nx) : null;
+    var nxN = nx ? items.filter(function (x) { return curLoc(x) === nxLoc && left(x); }).length : 0;
     sound("done");
     openSheet(
       '<div class="done-wrap">' + DONE_ICON +
@@ -2737,10 +2751,13 @@
           state.moves[pn] = { from: from, to: to, status: "failed", error: res.error, at: Date.now() };
           if (/멈췄|일시 중지/.test(res.error || "")) loadStatus().then(function () { render(false); });   // 멈춤 안내 띠를 바로
         }
-        if (state.tab === "scan" && $("sheet").hidden) render(false); else renderMoveBar();
+        if ((state.tab === "scan" || state.tab === "audit") && $("sheet").hidden) render(false);
+        else { renderMoveBar(); if (state.tab === "audit") peersDirty = true; }   // 창을 닫으면 목록도 새 위치로 다시 그림
         var am = $("aMove");   // 재고 확인 창이 이 부품으로 열려 있으면 위치 변경 줄도 새로 그림
         if (am && am.getAttribute("data-pn") === pn) {
           am.innerHTML = auditMoveHtml(pn);
+          var hit = findAuditItem(pn), hl = document.querySelector("#sheet .ai-loc");
+          if (hit && hl) hl.innerHTML = PIN_ICON + '<span class="mono-loc">' + esc(curLoc(hit) || "위치 없음") + '</span>' + (movedLoc(hit) ? '<span class="moved-from">옮김 · 시작 때 ' + esc(hit.lct_cd || "위치 없음") + '</span>' : '') + carryTag(hit);
           var ait = findAuditItem(pn), nb = $("aNow"), sy = ait && syncNow(ait);
           if (nb && sy && !nb.querySelector(".spin") && nb.querySelector(".ai-v")) nb.innerHTML = auditNowHtml(ait, sy.bmw, sy.lct, '최근 DMS', basis() + ' 기준');
           if ($("aLock") && ait && $("aExemptBox") && $("aExemptBox").hidden) $("aLock").outerHTML = lockHtml(ait);   // 사유를 적는 중이면 건드리지 않음
