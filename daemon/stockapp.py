@@ -723,10 +723,19 @@ def _screen_cleared(k: str, v) -> bool:
     return k not in _SCREEN_FIELDS or (k == "preSplyCd" and str(v[0] or "").strip() == "")
 
 
+# 저장과 상관없이 입출고·판매가 일어나면 DMS 가 바꾸는 값 (저장하는 1~2초 사이에 다른 직원의 출고·입고가 겹칠 수 있음)
+#   → 저장 후 검사에서 '다른 변경'으로 보지 않음 (2026-10-16 오류 줄이기)
+_MOVEMENT_FIELDS = frozenset((
+    "crtQty", "availQty", "totQty", "roQty", "poQty", "boQty", "moveQty", "reqQty1", "reqQty2",
+    "firstMoveDt", "lastMoveDt", "lastMoveDtChar", "lastSaleDt", "lastPurcDt", "suplyLastPurcDt", "dmndRegDt", "dmndPdt",
+    "tyearSaleDmnd", "lyearSaleDmnd", "saleFailQty", "saleFailAmt", "saleFailQtyPrice",
+    "movPrc", "movPrcHist", "purcAmt", "prcChangeDt", "rnum"))
+
+
 def _other_changes(a: dict, b: dict) -> dict:
     out = {}
     for k in sorted(set(a) | set(b)):
-        if k == "lctCd" or any(v in k for v in _VOLATILE):
+        if k == "lctCd" or k in _MOVEMENT_FIELDS or any(v in k for v in _VOLATILE):
             continue
         if json.dumps(a.get(k), ensure_ascii=False) != json.dumps(b.get(k), ensure_ascii=False):
             out[k] = [a.get(k), b.get(k)]
@@ -768,31 +777,51 @@ def _loc_change(page, branch: str, pn: str, params: dict, who) -> dict:
     if not LOC_RE.fullmatch(to):
         raise ValueError(f"위치 형식이 아닙니다: {to}")
     c = _cfg()
-    frame = _stock_master_frame(page)
-    r0 = frame.evaluate(_SELECT_JS, {"pn": pn, "select": True})
-    if r0.get("notReady"):   # 그 사이 화면이 다시 뜬 경우 한 번 더
-        frame = _stock_master_frame(page)
-        r0 = frame.evaluate(_SELECT_JS, {"pn": pn, "select": True})
-    if not r0.get("ok"):
-        raise RuntimeError(r0.get("reason"))
+    # 저장 전 단계(화면 열기·조회·줄 선택)는 일시적인 오류면 한 번 더 시도 — 아직 DMS 를 바꾸지 않았으므로 안전
+    #   (예: 10분 주기 직후 화면이 덜 뜸, DMS 응답 지연으로 조회 결과가 늦게 옴, 주기 중 화면이 다시 뜸)
+    for attempt in (1, 2, 3):
+        try:
+            frame = _stock_master_frame(page)
+            r0 = frame.evaluate(_SELECT_JS, {"pn": pn, "select": True})
+            if not r0.get("ok"):
+                raise RuntimeError(r0.get("reason"))
+            break
+        except Exception as e:
+            if attempt == 3 or "0건" in str(e):   # 재고마스터에 없는 부품은 다시 해도 같음
+                raise
+            _log(f"위치 변경 {pn}: 저장 전 단계 다시 시도 ({attempt}) — {type(e).__name__}: {str(e)[:120]}")
+            page.wait_for_timeout(1500 * attempt)
     cur = (r0["item"].get("lctCd") or "").strip()
+    if cur == to:   # 이미 그 위치 (다른 직원이 먼저 옮겼거나 DMS 에서 직접 바꿈) → 성공으로
+        return {"from": cur, "to": to, "unchanged": True}
     expected_from = params.get("from")
     if expected_from is not None and cur != (expected_from or "").strip():
         raise RuntimeError(f"그 사이 DMS 위치가 바뀌었습니다 (현재 {cur or '공란'}). 다시 조회 후 시도하세요")
-    if cur == to:
-        return {"from": cur, "to": to, "unchanged": True}
     s = frame.evaluate(_SAVE_JS, {"pn": pn, "loc": to, "dealer": c["dealer_cd"], "brch": c["brch_cd"]})
     if not s.get("ok"):
         if s.get("saved") or s.get("dialogVisible"):
             _halt(f"{pn} 저장 응답 이상: {s}", f"{pn} 저장 응답이 이상해 확인이 필요합니다")
         raise RuntimeError(s.get("reason") or f"DMS 저장 실패: {s.get('save')}")
-    r1 = frame.evaluate(_SELECT_JS, {"pn": pn, "select": False})   # 저장 통신이 끝나길 기다린 뒤 다시 조회해 확인
-    got = ((r1.get("item") or {}).get("lctCd") or "").strip()
-    other = _other_changes(r0["item"], r1.get("item") or {})
-    # 재고마스터 화면 저장이 원래 비우는 값 (직원이 화면에서 직접 저장해도 같음, 사용자 승인 2026-10-07)
-    #   preSplyCd(이전보급코드): 공백 → 빈값 / sftyStockPrid(안전재고기간): 화면 저장 데이터에 없는 항목이라 빈값이 됨
-    allowed = {k: v for k, v in other.items() if _screen_cleared(k, v)}
-    other = {k: v for k, v in other.items() if k not in allowed}
+    # 저장 통신이 끝나길 기다린 뒤 다시 조회해 확인. 이상이 보이면 1.5초 뒤 한 번 더 조회해 같을 때만 이상으로 봄
+    #   (조회가 저장 반영 전 값을 받거나 화면이 잠깐 다시 그려지는 일시 현상으로 멈추지 않게)
+    for attempt in (1, 2):
+        try:
+            r1 = frame.evaluate(_SELECT_JS, {"pn": pn, "select": False})
+        except Exception as e:
+            r1 = {"ok": False, "reason": f"{type(e).__name__}: {e}"}
+        got = ((r1.get("item") or {}).get("lctCd") or "").strip()
+        other = _other_changes(r0["item"], r1.get("item") or {})
+        # 재고마스터 화면 저장이 원래 비우는 값 (직원이 화면에서 직접 저장해도 같음, 사용자 승인 2026-10-07 · 10-16)
+        allowed = {k: v for k, v in other.items() if _screen_cleared(k, v)}
+        other = {k: v for k, v in other.items() if k not in allowed}
+        if r1.get("ok") and got == to and not other:
+            break
+        if attempt == 1:
+            page.wait_for_timeout(1500)
+            try:
+                frame = _stock_master_frame(page)
+            except Exception:
+                pass
     if not r1.get("ok") or got != to or other:
         _halt(f"{pn} 저장 후 확인 이상: 위치={got} 다른 변경={other}",
               f"{pn} 저장 뒤 위치 말고 바뀐 값이 있습니다 ({', '.join(other) or '다시 조회 실패'})")
