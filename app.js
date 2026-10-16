@@ -242,6 +242,22 @@
       au.data.forEach(function (a) { if (!state.audits[a.kind]) state.audits[a.kind] = a; });
     }
   }
+  // 끝내지 않은 지난 조사: 홈 카드는 "지금 기간"의 조사만 보여서, 시작만 하고 방치한 어제 이전 조사는 화면에서 사라졌음 → 따로 찾아 경고로 보여 줌
+  var staleAudits = [];   // [{id, kind, period_end, item_count, done, last_at}]
+  async function loadStale() {
+    var from = kstDate(Date.now() - 30 * 86400000), today = kstDate();
+    var r = await sb.from("inv_audits").select("id,kind,period_start,period_end,item_count,started_at,started_by_name")
+      .is("finished_at", null).lt("period_end", today).gte("period_end", from).order("period_end", { ascending: false }).limit(8);
+    if (r.error) return;
+    var list = [];
+    for (var i = 0; i < r.data.length; i++) {
+      var a = r.data[i], it = await sb.from("inv_audit_items").select("status,checked_at,marked_at").eq("audit_id", a.id);
+      var rows = it.error ? [] : it.data.filter(function (x) { return x.status; });
+      var last = rows.reduce(function (m, x) { var t = x.marked_at || x.checked_at || ""; return t > m ? t : m; }, "");
+      list.push({ id: a.id, kind: a.kind, period_end: a.period_end, item_count: a.item_count, done: rows.length, last_at: last || a.started_at, started_by: a.started_by_name });
+    }
+    staleAudits = list;
+  }
   async function loadAuditItems(auditId) {
     var all = [], from = 0, size = 1000;
     for (;;) {
@@ -1257,14 +1273,27 @@
   function periodLabel(kind, s) {
     if (!s) return "목록 준비 중";
     var md = function (d) { var x = d.split("-"); return Number(x[1]) + "/" + Number(x[2]); };
-    if (kind === "aging") return md(s.period_start) + " 장기재고 무작위 " + (s.items ? s.items.length : s.item_count) + "건";
+    if (kind === "aging") return md(s.period_start) + " 장기재고 " + (s.items ? s.items.length : s.item_count) + "건";
     return kind === "daily" ? md(s.period_start) + " 입고분" : md(s.period_start) + " ~ " + md(s.period_end) + " 출고분";
   }
   var AUDIT_TITLE = { daily: "일일 재고조사", aging: "일일장기 재고조사", weekly: "주간 재고조사" };
   var AUDIT_RULE = { daily: "오늘 입고된 부품 중 현재고가 있는 부품", weekly: "지난주 월~토 출고된 부품 중 현재고가 있는 부품",
-    aging: "최종입고가 180일 넘었고 그동안 창고에서 출고된 적 없는 부품 중 하루 10개 무작위. 한 바퀴 돌 때까지 겹치지 않고, 최근 180일 안에 재고조사로 확인한 부품은 빠짐" };
+    aging: "최종입고가 180일 넘었고 그동안 창고에서 출고된 적 없는 부품 중 하루 10개. 바코드로 스캔한 지 오래된 부품을 먼저 뽑고(기록이 쌓이기 전에는 무작위), 한 바퀴 돌 때까지 겹치지 않고, 최근 180일 안에 재고조사로 확인한 부품은 빠짐" };
   var auditCounts = {};   // audit_id -> {done, diff} (홈 카드용)
 
+  function staleHtml() {
+    if (!staleAudits.length) return "";
+    var md = function (d) { var x = String(d).slice(0, 10).split("-"); return Number(x[1]) + "/" + Number(x[2]); };
+    var today = kstDate();
+    var rows = staleAudits.map(function (a) {
+      var days = Math.round((Date.parse(today) - Date.parse(String(a.period_end).slice(0, 10))) / 86400000);
+      return '<div class="stale-row"><div class="row-main"><div class="stale-t">' + md(a.period_end) + ' ' + AUDIT_TITLE[a.kind] + '</div>' +
+        '<div class="row-sub">' + a.done + ' / ' + a.item_count + ' 확인 · ' + days + '일째 · 마지막 확인 ' + md(kstDate(Date.parse(a.last_at))) + '</div></div>' +
+        '<button class="btn-secondary" data-stale="' + a.id + '">종료하기</button></div>';
+    }).join("");
+    return '<div class="stale"><div class="stale-h">끝내지 않은 지난 조사 ' + staleAudits.length + '건</div>' + rows +
+      '<p class="footnote">목록이 지난 날짜라 이어서 확인할 수 없습니다. 더 하지 않을 조사는 종료해 두세요 (종료해도 확인한 기록은 그대로 남습니다).</p></div>';
+  }
   function viewAuditHome() {
     var cards = ["daily", "aging", "weekly"].map(function (k) {
       var s = state.sources[k], a = state.audits[k];
@@ -1282,7 +1311,7 @@
         (live && st ? progressBar({ done: st.done, total: total }) : '') +
         '<div class="acard-foot">' + foot + '</div></button>';
     }).join("");
-    return '<h1 class="large">재고조사</h1><p class="meta">해운대 부품창고 · 위치 순서대로 확인</p>' +
+    return '<h1 class="large">재고조사</h1><p class="meta">해운대 부품창고 · 위치 순서대로 확인</p>' + staleHtml() +
       '<div class="acards">' + cards + '</div>' +
       '<p class="footnote">일일: ' + AUDIT_RULE.daily + '<br>일일장기: ' + AUDIT_RULE.aging + '<br>주간: ' + AUDIT_RULE.weekly + '<br>수량은 그 부품의 현재고 전체입니다.</p>';
   }
@@ -1741,6 +1770,26 @@
     await loadAudits();
     closeSheet(); render(false);
     openReport();
+  }
+
+  function openStaleFinish(id) {
+    var a = staleAudits.filter(function (x) { return x.id === id; })[0];
+    if (!a) return;
+    var md = function (d) { var x = String(d).slice(0, 10).split("-"); return Number(x[1]) + "/" + Number(x[2]); };
+    openSheet(
+      '<div class="sheet-head"><button class="cancel" data-close>취소</button><h2>지난 조사 종료</h2><span></span></div>' +
+      '<p class="sheet-sub">' + md(a.period_end) + ' ' + AUDIT_TITLE[a.kind] + ' · ' + a.done + ' / ' + a.item_count + ' 확인</p>' +
+      '<p class="footnote">종료하면 이 조사는 더 이상 고칠 수 없습니다. 확인한 ' + a.done + '건은 그대로 남고 통계에도 들어갑니다. 확인하지 못한 ' + (a.item_count - a.done) + '건은 미확인으로 남습니다.</p>' +
+      '<button class="btn-primary" id="staleFinishOk" data-id="' + esc(id) + '">종료</button>'
+    );
+  }
+  async function finishStale(btn) {
+    btn.disabled = true;
+    var r = await sb.rpc("inv_finish_audit", { p_id: btn.getAttribute("data-id") });
+    if (r.error) { toast("종료하지 못했습니다: " + r.error.message); btn.disabled = false; return; }
+    await Promise.all([loadAudits(), loadStale().catch(function () {})]);
+    closeSheet(); render(false);
+    toast("지난 조사를 종료했습니다");
   }
 
   // 잘못 종료했을 때: 종료 표시만 지우고 확인한 내용 그대로 이어서
@@ -2549,7 +2598,7 @@
       closeSheet();
       if (t === "scan" && state.tab === "scan") state.result = [];
       if (t === "audit" && state.tab === "audit") { state.auditOpen = null; state.auditLoc = null; }
-      if (t === "audit") loadAudits().then(function () { if (state.tab === "audit") render(false); });
+      if (t === "audit") Promise.all([loadAudits(), loadStale().catch(function () {})]).then(function () { if (state.tab === "audit") render(false); });
       if (t === "log") loadChecks().then(function () { if (state.tab === "log") render(false); });   // 다른 사람이 새로 체크한 것도 보이게
       state.tab = t;
       render(true); return;
@@ -2634,6 +2683,7 @@
     }
     // 재고조사
     if (el.hasAttribute("data-audit")) { openAudit(el.getAttribute("data-audit")); return; }
+    if (el.hasAttribute("data-stale")) { openStaleFinish(el.getAttribute("data-stale")); return; }
     if (el.id === "auditBack") { state.auditOpen = null; state.auditLoc = null; peers = {}; lastTracked = ""; if (auditChannel) { sb.removeChannel(auditChannel); auditChannel = null; } render(true); return; }
     if (el.id === "auditStart") { startAudit(el); return; }
     if (el.hasAttribute("data-afilter")) { state.auditFilter = el.getAttribute("data-afilter"); render(false); return; }
@@ -2683,6 +2733,7 @@
     if (el.id === "auditFinish") { openFinish(); return; }
     if (el.id === "auditRefresh") { refreshAudit(el); return; }
     if (el.id === "auditFinishOk") { finishAudit(el); return; }
+    if (el.id === "staleFinishOk") { finishStale(el); return; }
     if (el.id === "auditReport") { openReport(); return; }
     if (el.id === "auditReopen") { openReopen(); return; }
     if (el.id === "auditReopenOk") { reopenAudit(el); return; }
@@ -2946,7 +2997,7 @@
     if (!booted) { state.loading = true; render(true); }
     try {
       // 저장해 둔 재고로 시작했으면 바뀐 것만 받음
-      await Promise.all([loadStatus(), booted ? updateParts() : loadParts(), loadChecks(), loadAudits(), loadRrParts().catch(function () {})]);
+      await Promise.all([loadStatus(), booted ? updateParts() : loadParts(), loadChecks(), loadAudits(), loadStale().catch(function () {}), loadRrParts().catch(function () {})]);
       lastPartsAt = state.status && state.status.parts_at;
       lastRrAt = state.status && state.status.rr_parts_at;
       saveSnap();

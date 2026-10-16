@@ -62,6 +62,10 @@ function check(name, ok, extra) { results.push((ok ? 'PASS ' : 'FAIL ') + name +
   let failAuditPatch = false;
   let rrErr = null, rrPartsAt = iso(now - 120000);
   const reqPosts = [], seenPosts = [];
+  // 끝내지 않은 지난 조사 (시작만 하고 방치): 10/7 일일, 100건 중 3건 확인
+  let staleAudits = [{ id: 'stale-1', kind: 'daily', period_start: '2026-10-07', period_end: '2026-10-07', item_count: 100, started_at: '2026-10-07T01:00:00Z', started_by_name: '김확인' }];
+  const staleItems = [{ status: 'ok', checked_at: '2026-10-07T03:00:00Z', marked_at: '2026-10-07T03:00:00Z' }, { status: 'diff', checked_at: '2026-10-08T05:00:00Z', marked_at: '2026-10-08T05:00:00Z' }, { status: 'ok', checked_at: '2026-10-07T04:00:00Z', marked_at: null }, { status: null, checked_at: null, marked_at: null }];
+  const staleFinishCalls = [];
   const rrParts = [
     { item_cd: 'PN10000', item_nm: 'RR부품', lct_cd: 'R010101', crt_qty: 4 },
     { item_cd: 'QQ12345', item_nm: 'RR전용', lct_cd: 'R020202', crt_qty: 7 },
@@ -90,9 +94,12 @@ function check(name, ok, extra) { results.push((ok ? 'PASS ' : 'FAIL ') + name +
       return json(rows);
     }
     if (t === 'inv_audit_source') return json([src]);
+    if (t === 'inv_audits' && u.searchParams.get('finished_at') === 'is.null' && (u.searchParams.get('period_end') || '').startsWith('lt.')) return json(staleAudits);
+    if (t === 'rpc/inv_finish_audit' && JSON.parse(req.postData()).p_id === 'stale-1') { staleFinishCalls.push('stale-1'); staleAudits = []; return json(null, 204); }
     if (t === 'inv_audits') return json([audit]);
     if (t === 'rpc/inv_reopen_audit') { Object.assign(audit, { finished_at: null, finished_by_name: null, reopened_at: iso(Date.now()), reopened_by_name: '시험' }); return json(null, 204); }
     if (t === 'rpc/inv_finish_audit') { Object.assign(audit, { finished_at: iso(Date.now()), finished_by_name: '시험' }); return json(null, 204); }
+    if (t === 'inv_audit_items' && u.searchParams.get('audit_id') === 'eq.stale-1') return json(staleItems);
     if (t === 'inv_audit_items') {
       const inQ = u.searchParams.get('item_cd');
       if (m === 'GET' && inQ && inQ.startsWith('in.')) {   // 보고서 '지난 수량 다름 재확인': 여러 부품의 지난 조사에서 수량 다름이었던 것
@@ -219,6 +226,14 @@ function check(name, ok, extra) { results.push((ok ? 'PASS ' : 'FAIL ') + name +
 
   // ===== 4. 재고조사: 전파 끊김 → 휴대폰에 저장 → 연결되면 보냄 =====
   await page.click('[data-tab="audit"]');
+  // ===== 끝내지 않은 지난 조사 경고 + 종료하기 =====
+  await page.waitForSelector('.stale', { timeout: 5000 });
+  const staleTxt = await page.textContent('.stale');
+  check('홈에 끝내지 않은 지난 조사 경고 (날짜·확인 수·며칠째·마지막 확인)', staleTxt.includes('끝내지 않은 지난 조사 1건') && staleTxt.includes('10/7 일일 재고조사') && staleTxt.includes('3 / 100 확인') && staleTxt.includes('일째') && staleTxt.includes('마지막 확인 10/8'), staleTxt);
+  await page.click('[data-stale="stale-1"]');
+  await page.click('#staleFinishOk');
+  await page.waitForFunction(() => !document.querySelector('.stale'), null, { timeout: 5000 });
+  check('종료하기 → 서버에 종료 요청, 경고가 사라짐', staleFinishCalls.length === 1 && !(await page.$('.stale')));
   await page.click('[data-audit="weekly"]');
   await page.waitForSelector('[data-aitem="PN10000"]');
   // ===== 함께 작업 중 (구역 분담 표시): 박작업 이 A140112 의 PN10001 을 보는 중 =====

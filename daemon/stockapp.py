@@ -288,7 +288,7 @@ def _dlv_sync(page, today: str) -> dict:
 
 def _aging_candidates(pw_rows: list, today: str, dlv_last: dict) -> list:
     """부품창고 현재고 중 최종입고일이 AGING_DAYS 일보다 오래됐고, 그 기간 동안 창고에서 나간 적이 없는 부품 (Z 제외).
-    최근에 재고조사로 확인한 부품 제외·무작위 뽑기·한 바퀴 돌기·이월은 DB 함수 inv_build_aging 이 함"""
+    최근에 재고조사로 확인한 부품 제외·스캔한 지 오래된 부품 우선 뽑기·한 바퀴 돌기·이월은 DB 함수 inv_build_aging 이 함"""
     from datetime import date, timedelta
     cutoff = (date.fromisoformat(today) - timedelta(days=AGING_DAYS)).isoformat()
     out = []

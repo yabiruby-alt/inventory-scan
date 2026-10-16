@@ -241,6 +241,12 @@ button.row:active, .row-btn:active { background: var(--fill); }
 @keyframes spin { to { transform: rotate(360deg); } }
 /* 재고조사 */
 .acards { display: flex; flex-direction: column; gap: 12px; }
+.stale { margin: 12px 0; padding: 12px 14px; border-radius: var(--r); background: var(--warn-soft); }
+.stale-h { font-size: var(--fs-md); font-weight: 600; color: var(--warn); margin-bottom: 6px; }
+.stale-row { display: flex; align-items: center; gap: 10px; padding: 6px 0; }
+.stale-row .row-main { flex: 1; min-width: 0; }
+.stale-t { font-size: var(--fs-md); font-weight: 600; }
+.stale .footnote { margin: 6px 0 0; }
 .acard { display: flex; flex-direction: column; gap: 10px; width: 100%; background: var(--surface); border-radius: var(--r); padding: 14px 16px; }
 .acard:active { background: var(--fill); }
 .acard-top { display: flex; align-items: center; gap: 10px; }
