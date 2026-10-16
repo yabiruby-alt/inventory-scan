@@ -476,7 +476,7 @@ def poll(page) -> None:
         branch = _cfg()["branch"]
         if t - _S.last_beat >= HEARTBEAT_EVERY_SEC:
             # 프로그램은 살아 있어도 DMS 브라우저가 닫혔거나 로그인이 풀렸으면 앱에 이유를 알림
-            _rest("PATCH", f"inv_status?branch=eq.{_q(branch)}", {"daemon_seen_at": _now_iso(), "dms_error": _dms_problem(page)})
+            _rest("PATCH", f"inv_status?branch=eq.{_q(branch)}", dict({"daemon_seen_at": _now_iso(), "dms_error": _dms_problem(page)}, **_halt_status()))
             _S.last_beat = t
         # 데몬이 멈춘 동안 쌓인 요청은 버림 (늦게 실행된 위치 변경이 DMS를 바꾸지 않게)
         # (매초 하지 않고 30초마다 — 요청 확인을 가볍게)
@@ -534,6 +534,12 @@ def _handle(page, branch: str, req: dict) -> None:
     if not taken:
         return
     kind, pn = req["kind"], (req.get("item_cd") or "").strip().upper()
+    if kind == "loc_resume":   # 관리자가 앱에서 '위치 변경 다시 켜기' (관리자만 보낼 수 있음: 서버 정책)
+        try:
+            _finish(req["id"], "done", result=_loc_resume(branch, req.get("requested_by_name")))
+        except Exception as e:
+            _finish(req["id"], "failed", error=str(e)[:500])
+        return
     try:
         if not re.fullmatch(r"[A-Z0-9]{5,20}", pn) or pn.startswith("Z"):
             raise ValueError(f"품번 형식이 아닙니다: {pn}")
@@ -778,7 +784,7 @@ def _loc_change(page, branch: str, pn: str, params: dict, who) -> dict:
     s = frame.evaluate(_SAVE_JS, {"pn": pn, "loc": to, "dealer": c["dealer_cd"], "brch": c["brch_cd"]})
     if not s.get("ok"):
         if s.get("saved") or s.get("dialogVisible"):
-            LOC_HALT.write_text(f"{_now_iso()} {pn} 저장 응답 이상: {s}\n", encoding="utf-8")
+            _halt(f"{pn} 저장 응답 이상: {s}", f"{pn} 저장 응답이 이상해 확인이 필요합니다")
         raise RuntimeError(s.get("reason") or f"DMS 저장 실패: {s.get('save')}")
     r1 = frame.evaluate(_SELECT_JS, {"pn": pn, "select": False})   # 저장 통신이 끝나길 기다린 뒤 다시 조회해 확인
     got = ((r1.get("item") or {}).get("lctCd") or "").strip()
@@ -788,9 +794,57 @@ def _loc_change(page, branch: str, pn: str, params: dict, who) -> dict:
     allowed = {k: v for k, v in other.items() if _screen_cleared(k, v)}
     other = {k: v for k, v in other.items() if k not in allowed}
     if not r1.get("ok") or got != to or other:
-        LOC_HALT.write_text(f"{_now_iso()} {pn} 저장 후 확인 이상: 위치={got} 다른 변경={other}\n", encoding="utf-8")
-        raise RuntimeError(f"저장 후 확인 이상 (위치 {got}, 다른 변경 {list(other)}) — 위치 변경을 멈췄습니다")
+        _halt(f"{pn} 저장 후 확인 이상: 위치={got} 다른 변경={other}",
+              f"{pn} 저장 뒤 위치 말고 바뀐 값이 있습니다 ({', '.join(other) or '다시 조회 실패'})")
+        if r1.get("ok") and got == to:
+            # 위치는 실제로 바뀜 → 실패가 아니라 '바뀌었지만 확인 필요'로 끝냄 (앱도 새 위치로 표시)
+            res = _loc_done(branch, pn, cur, to, who, allowed, t0, "화면")
+            res["warning"] = f"위치는 바뀌었지만 다른 값도 바뀌어 위치 변경을 멈췄습니다 ({', '.join(other)}). 관리자 확인이 필요합니다"
+            return res
+        raise RuntimeError(f"저장 후 확인 이상 (위치 {got or '확인 못 함'}, 다른 변경 {list(other)}) — 위치 변경을 멈췄습니다")
     return _loc_done(branch, pn, cur, to, who, allowed, t0, "화면")
+
+
+# ---- 위치 변경 멈춤 알림·해제 (2026-10-16) ----
+#   멈추면: 파일(LOC_CHANGE_HALT.txt) + 앱 상태(inv_status.loc_halt → 앱 모든 화면에 띠) + 데몬 PC 알림창
+#   해제: 관리자가 앱에서 'loc_resume' 요청 → 멈춤 내용을 이력에 남기고 파일을 지움. PC 에서 파일을 직접 지워도 1분 안에 앱에 반영
+def _halt(detail: str, short: str) -> None:
+    LOC_HALT.write_text(f"{_now_iso()} {short} | {detail}\n", encoding="utf-8")   # 앞부분(짧은 사유)은 앱에, 뒷부분은 확인용
+    try:
+        _rest("PATCH", f"inv_status?branch=eq.{_q(_cfg()['branch'])}", {"loc_halt": short, "loc_halt_at": _now_iso()})
+    except Exception as e:
+        _log(f"멈춤 상태를 앱에 올리지 못함: {e}")
+    try:
+        import __main__ as pb
+        if hasattr(pb, "notify_user"):
+            pb.notify_user("재고 앱 위치 변경 멈춤", f"{short}. 앱에서 관리자가 '위치 변경 다시 켜기'를 누르면 다시 동작합니다.")
+    except Exception:
+        pass
+
+
+def _halt_status() -> dict:
+    if not LOC_HALT.exists():
+        return {"loc_halt": None, "loc_halt_at": None}
+    try:
+        txt = LOC_HALT.read_text(encoding="utf-8").strip()
+    except Exception:
+        txt = ""
+    msg = (txt.split(" ", 1)[1] if " " in txt else txt).split(" | ", 1)[0].strip()
+    return {"loc_halt": msg[:300] or "위치 변경이 멈춰 있습니다",
+            "loc_halt_at": datetime.fromtimestamp(LOC_HALT.stat().st_mtime, timezone.utc).isoformat()}
+
+
+def _loc_resume(branch: str, who) -> dict:
+    if not LOC_HALT.exists():
+        _rest("PATCH", f"inv_status?branch=eq.{_q(branch)}", {"loc_halt": None, "loc_halt_at": None})
+        return {"resumed": False, "note": "이미 정상 상태"}
+    txt = LOC_HALT.read_text(encoding="utf-8").strip()
+    with open(HERE / "loc_halt_history.log", "a", encoding="utf-8") as f:
+        f.write(f"{txt}  → 해제 {_now_iso()} 앱에서 {who}\n")
+    LOC_HALT.unlink()
+    _rest("PATCH", f"inv_status?branch=eq.{_q(branch)}", {"loc_halt": None, "loc_halt_at": None})
+    _log(f"위치 변경 다시 켬 (앱에서 {who})")
+    return {"resumed": True}
 
 
 def _loc_done(branch, pn, cur, to, who, allowed, t0, how) -> dict:

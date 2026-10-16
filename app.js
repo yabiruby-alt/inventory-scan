@@ -220,6 +220,7 @@
     var r = await sb.from("inv_status").select("*").maybeSingle();
     if (!r.error) state.status = r.data;
     renderNet();
+    if ($("daemonNotice")) $("daemonNotice").innerHTML = daemonNotice();   // 위치 변경 멈춤 안내 등 (1분마다 갱신)
   }
   async function loadChecks() {
     var all = [], from = 0, size = 1000;
@@ -901,7 +902,17 @@
   }
 
   // ---------- 스캔 탭 ----------
+  function isAdmin() { return !!state.user && (state.user.role === "master" || state.user.role === "admin"); }
+  function locHalted() { return !!(state.status && state.status.loc_halt); }
+  function haltNotice() {
+    if (!locHalted()) return "";
+    return '<div class="notice err-notice" style="margin:8px 0 0"><div style="flex:1;min-width:0"><b>위치 변경이 멈춰 있습니다</b> · ' + esc(state.status.loc_halt) +
+      (state.status.loc_halt_at ? ' (' + hhmm(state.status.loc_halt_at) + ')' : '') +
+      (isAdmin() ? '' : '<br>관리자가 확인한 뒤 다시 켤 수 있습니다') + '</div>' +
+      (isAdmin() ? '<button class="ai-link" id="locResume" style="flex:none">다시 켜기</button>' : '') + '</div>';
+  }
   function daemonNotice() {
+    if (locHalted()) return haltNotice();
     if (partsStaleMin()) return '<div class="notice" style="margin:8px 0 0">재고가 ' + partsStaleMin() + '분째 갱신되지 않았습니다 (' + basis() + ' 기준). 데몬 PC를 확인해 주세요.</div>';
     return daemonStale() ? '<div class="notice" style="margin:8px 0 0">' + esc(daemonWhy()) + '. 재고는 ' + basis() + ' 기준이고, 연결될 때까지 RDC 조회·위치 변경은 할 수 없습니다.</div>' : '';
   }
@@ -1014,6 +1025,7 @@
     if (m.status === "pending") return '<div class="banner info"><span class="spin" aria-hidden="true"></span>DMS 반영 중 · ' + esc(m.from || "공란") + ' → ' + esc(m.to) + '</div>';
     if (m.status === "failed") m.seen = true;   // 부품 화면에서 봤으면 위쪽 띠는 내림
     if (m.status === "failed") return '<div class="banner">위치 변경 실패 · ' + esc(m.error || "") + '</div>';
+    if (m.warn) return '<div class="banner">위치는 바뀌었습니다 · ' + esc(m.from || "공란") + ' → ' + esc(m.to) + ' · 확인 필요: ' + esc(m.warn) + '</div>';
     return '<div class="banner ok">DMS 반영 완료 · ' + esc(m.from || "공란") + ' → ' + esc(m.to) + ' · ' + m.time + '</div>';
   }
 
@@ -1031,9 +1043,10 @@
     var route = ' <b class="mono-loc">' + esc(m.from || "공란") + ' → ' + esc(m.to) + '</b>';
     var text = m.status === "pending" ? '<span class="spin" aria-hidden="true"></span><span class="mb-text">위치 변경 중 · <b>' + esc(m.pn) + '</b>' + route + '</span>'
       : m.status === "failed" ? '<span class="mb-text">위치 변경 실패 · <b>' + esc(m.pn) + '</b> ' + esc(m.error || "") + '</span>'
+      : m.warn ? '<span class="mb-text">위치는 바뀜 · 확인 필요 · <b>' + esc(m.pn) + '</b>' + route + '</span>'
       : '<span class="mb-text">DMS 반영 완료 · <b>' + esc(m.pn) + '</b>' + route + '</span>';
     var more = pending.length > 1 ? '<span class="mb-more">외 ' + (pending.length - 1) + '건</span>' : '';
-    bar.className = "movebar" + (m.status === "failed" ? " err" : m.status === "done" ? " ok" : "");
+    bar.className = "movebar" + (m.status === "failed" ? " err" : m.warn ? " warn" : m.status === "done" ? " ok" : "");
     bar.innerHTML = text + more;
     bar.hidden = false;
     moveBarPn = m.pn;
@@ -1474,7 +1487,7 @@
     var p = state.parts[pn], m = state.moves[pn];
     if (!p) return '<div class="ai-row"><div class="ai-l">위치 변경<small>DMS 현재고에 없는 부품이라 바꿀 수 없습니다</small></div></div>';
     if (m && m.status === "pending") return '<div class="ai-row"><div class="ai-l">위치 변경<small>DMS 반영 중 · ' + esc(m.from || "없음") + ' → ' + esc(m.to) + '</small></div><span class="spin" aria-hidden="true"></span></div>';
-    if (m && m.status === "done") return '<div class="ai-row"><div class="ai-l">위치 변경<small>' + esc(m.from || "없음") + ' → ' + esc(m.to) + ' 변경함 · ' + esc(m.time || "") + '</small></div><button class="ai-link" data-amove="' + esc(pn) + '">다시 변경</button></div>';
+    if (m && m.status === "done") return '<div class="ai-row"><div class="ai-l">위치 변경<small' + (m.warn ? ' class="warn-text"' : '') + '>' + esc(m.from || "없음") + ' → ' + esc(m.to) + ' 변경함 · ' + esc(m.time || "") + (m.warn ? ' · 확인 필요' : '') + '</small></div><button class="ai-link" data-amove="' + esc(pn) + '">다시 변경</button></div>';
     if (m && m.status === "failed") return '<div class="ai-row"><div class="ai-l">위치 변경<small class="warn-text">실패 · ' + esc(m.error || "") + '</small></div><button class="ai-link" data-amove="' + esc(pn) + '">다시</button></div>';
     return '<div class="ai-row"><div class="ai-l">위치 변경</div><button class="ai-link" data-amove="' + esc(pn) + '">변경</button></div>';
   }
@@ -2456,6 +2469,7 @@
         '<div class="row"><div class="row-main">새 위치</div><input class="field" id="newLoc" style="text-align:right;width:55%;font-family:var(--mono)" placeholder="예: A140112" aria-label="새 위치" autocomplete="off" autocapitalize="characters"></div>' +
       '</div>' +
       (daemonStale() ? '<div class="notice">' + esc(daemonWhy()) + '. 지금은 위치 변경을 저장할 수 없습니다.</div>' : '') +
+      (locHalted() ? '<div class="notice">위치 변경이 멈춰 있어 저장할 수 없습니다 · ' + esc(state.status.loc_halt) + (isAdmin() ? ' — 스캔 화면 위 안내에서 다시 켤 수 있습니다' : ' — 관리자에게 알려 주세요') + '</div>' : '') +
       '<p class="footnote">새 위치 라벨을 스캔해도 됩니다. 저장하면 DMS에 변경을 요청하고, 보통 몇 초 안에 반영됩니다. DMS 데이터 갱신 중이면 몇 분 걸릴 수 있습니다.</p>' +
       '<div class="notice warn" id="newLocWarn" hidden></div>' +
       '<button class="btn-primary" id="saveMove" data-pn="' + esc(pn) + '" disabled>저장</button>'
@@ -2529,6 +2543,17 @@
       state.sort = el.getAttribute("data-sort");
       document.querySelectorAll("[data-sort]").forEach(function (b) { b.classList.toggle("on", b === el); });
       $("locList").innerHTML = locRows(state.result[state.result.length - 1].code, $("locSearch") ? $("locSearch").value : "");
+      return;
+    }
+    if (el.id === "locResume") {
+      if (!el.getAttribute("data-confirm")) { el.setAttribute("data-confirm", "1"); el.textContent = "정말 다시 켜기"; return; }
+      el.disabled = true; el.textContent = "켜는 중…";
+      sendRequest("loc_resume", "RESUME").then(function (id) {
+        waitRequest(id, function (res) {
+          loadStatus().then(function () { render(false); });
+          toast(res.status === "done" ? "위치 변경을 다시 켰습니다" : "다시 켜지 못했습니다: " + (res.error || ""));
+        });
+      }).catch(function (e) { el.disabled = false; el.textContent = "다시 켜기"; toast("요청하지 못했습니다: " + e.message); });
       return;
     }
     if (el.hasAttribute("data-spot")) { spotOk(el.getAttribute("data-spot"), el); return; }
@@ -2656,7 +2681,7 @@
     if (e.target.id === "aMemoIn" || e.target.id === "memoIn") memoTyped(e.target);
     if (e.target.id === "newLoc") {
       var v = normCode(e.target.value), pn = $("saveMove").getAttribute("data-pn");
-      $("saveMove").disabled = !looksLoc(v) || v === state.parts[pn].lct_cd;
+      $("saveMove").disabled = !looksLoc(v) || v === state.parts[pn].lct_cd || locHalted();
       if (e.target.getAttribute("data-scanned") !== v) e.target.removeAttribute("data-scanned");   // 스캔한 뒤 손으로 고치면 손 입력
       $("saveMove").removeAttribute("data-confirm"); $("saveMove").textContent = "저장";
       if ($("newLocWarn")) $("newLocWarn").hidden = true;
@@ -2702,12 +2727,15 @@
       else { closeSheet(); if (nextScan()) toast("위치 변경을 요청했습니다 · " + pn + " → " + to); else render(false); }
       waitRequest(id, function (res) {
         if (res.status === "done") {
-          state.moves[pn] = { from: from, to: to, status: "done", time: hhmm(), at: Date.now() };
+          var warn = res.result && res.result.warning;   // 위치는 바뀌었지만 다른 값도 바뀌어 데몬이 멈춤
+          state.moves[pn] = { from: from, to: to, status: "done", time: hhmm(), at: Date.now(), warn: warn || null };
+          if (warn) { toast("위치는 바뀌었지만 확인이 필요합니다 · " + pn); loadStatus().then(function () { render(false); }); }
           var p = state.parts[pn];
           locRemove(p.lct_cd, pn);
           p.lct_cd = to; locAdd(to, pn);
         } else {
           state.moves[pn] = { from: from, to: to, status: "failed", error: res.error, at: Date.now() };
+          if (/멈췄|일시 중지/.test(res.error || "")) loadStatus().then(function () { render(false); });   // 멈춤 안내 띠를 바로
         }
         if (state.tab === "scan" && $("sheet").hidden) render(false); else renderMoveBar();
         var am = $("aMove");   // 재고 확인 창이 이 부품으로 열려 있으면 위치 변경 줄도 새로 그림

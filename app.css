@@ -480,3 +480,6 @@ button.row:active, .row-btn:active { background: var(--fill); }
 .btn-spot.diff { background: var(--warn-soft); color: var(--warn); box-shadow: inset 0 0 0 1.5px var(--warn); }
 /* 부품번호는 길게 눌러 복사 (앱이 직접 복사하므로 기본 글자 선택·메뉴는 끔) */
 .pn, .ai-pn, .rtitle.mono { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
+.movebar.warn { background: var(--warn-soft); color: var(--warn); }
+.notice.err-notice { background: rgba(215,0,21,.10); color: var(--danger); align-items: center; }
+.notice.err-notice .ai-link { color: var(--danger); text-decoration: underline; min-height: 36px; }
