@@ -732,6 +732,18 @@ _MOVEMENT_FIELDS = frozenset((
     "movPrc", "movPrcHist", "purcAmt", "prcChangeDt", "rnum"))
 
 
+def _screen_filled(k: str, v, before: dict) -> bool:
+    """화면 저장이 정해진 값으로 채우는 항목: 가격단위수량(retailPrcUnitQty)은 화면이 구매요소수량(purcEmQty)을 그대로 보냄
+    (DMS 화면 코드 "가격단위수량 -> 구매요소수량으로 통일"). 비어 있던 부품을 저장하면 구매요소수량 값으로 채워짐
+    (2026-10-17 31108893701 등 3건 빈값 → 1 로 멈춤, 직원이 화면에서 저장해도 같음)"""
+    if k != "retailPrcUnitQty":
+        return False
+    try:
+        return float(v[1]) == float(before.get("purcEmQty"))
+    except (TypeError, ValueError):
+        return False
+
+
 def _other_changes(a: dict, b: dict) -> dict:
     out = {}
     for k in sorted(set(a) | set(b)):
@@ -812,7 +824,7 @@ def _loc_change(page, branch: str, pn: str, params: dict, who) -> dict:
         got = ((r1.get("item") or {}).get("lctCd") or "").strip()
         other = _other_changes(r0["item"], r1.get("item") or {})
         # 재고마스터 화면 저장이 원래 비우는 값 (직원이 화면에서 직접 저장해도 같음, 사용자 승인 2026-10-07 · 10-16)
-        allowed = {k: v for k, v in other.items() if _screen_cleared(k, v)}
+        allowed = {k: v for k, v in other.items() if _screen_cleared(k, v) or _screen_filled(k, v, r0["item"])}
         other = {k: v for k, v in other.items() if k not in allowed}
         if r1.get("ok") and got == to and not other:
             break
