@@ -2276,9 +2276,9 @@
   }
 
   // ---------- 재고조사 중 화면 꺼짐 방지 (Screen Wake Lock) ----------
-  //   조사 목록을 열어 둔 동안만 켬. 다른 탭으로 가거나 앱을 내리면 풀림(앱으로 돌아오면 다시 켬)
+  //   앱이 화면에 떠 있는 동안 항상 켬 (2026-10-17: 일반 스캔 중에도 꺼지지 않게). 앱을 내리면 풀리고 돌아오면 다시 켬
   var wakeLock = null, wakeAsking = false;
-  function wantWake() { return !!state.user && state.tab === "audit" && !!state.auditOpen && document.visibilityState === "visible"; }
+  function wantWake() { return document.visibilityState === "visible"; }
   async function syncWake() {
     if (!("wakeLock" in navigator) || wakeAsking) return;
     if (wantWake() && !wakeLock) {
@@ -2296,6 +2296,8 @@
     }
   }
   document.addEventListener("visibilitychange", syncWake);
+  document.addEventListener("pointerdown", function () { if (!wakeLock) syncWake(); });   // 처음 열 때 거절됐으면 화면을 만질 때 다시
+  syncWake();
 
   // ---------- 부품번호 길게 눌러 복사 ----------
   //   목록·부품 화면·재고 확인 창의 부품번호를 0.5초 누르고 있으면 클립보드에 복사 (DMS 등에 붙여넣기). 누른 뒤의 탭 동작은 막음
