@@ -2228,7 +2228,8 @@
         '<div class="row"><div class="row-main">제외</div><span class="row-value">Z 서비스 코드</span></div>' +
       '</div>' +
       '<div class="section-label">기록</div>' +
-      '<div class="group"><button class="row" id="movesOpen"><div class="row-main row-link">위치 변경 이력</div>' + CHEV + '</button></div>' +
+      '<div class="group"><button class="row" id="movesOpen"><div class="row-main row-link">위치 변경 이력</div>' + CHEV + '</button>' +
+        '<a class="row" href="labels.html" target="_blank" rel="noopener"><div class="row-main row-link">위치 라벨 출력<div class="row-sub">PC에서 라벨 프린터로 50×20mm 위치 바코드 인쇄</div></div>' + CHEV + '</a></div>' +
       '<div class="section-label"></div>' +
       '<div class="group"><button class="row" id="logoutBtn"><div class="row-main row-danger">로그아웃</div></button></div>';
   }

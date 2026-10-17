@@ -1,0 +1,211 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>위치 라벨 출력</title>
+<!-- 위치(로케이션) 바코드 라벨 출력 (2026-10-17): 50×20mm 라벨지, Code 128, Windows 라벨 프린터 드라이버로 바로 인쇄.
+     라벨 프로그램 없이 PC 크롬에서 열어 위치를 고르고 인쇄한다. 같은 주소의 앱에 로그인돼 있으면 "부품이 있는 위치 불러오기"도 됨 -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jsbarcode/3.11.6/JsBarcode.all.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.2/dist/umd/supabase.js"></script>
+<style>
+  :root { --bg: #F2F2F7; --surface: #fff; --label: #1C1C1E; --label2: #6C6C70; --sep: rgba(60,60,67,.16); --accent: #007AFF; --warn: #B25600; }
+  @media (prefers-color-scheme: dark) { :root { --bg: #000; --surface: #1C1C1E; --label: #F2F2F7; --label2: #98989F; --sep: rgba(84,84,88,.6); --accent: #0A84FF; --warn: #FF9F0A; } }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--label); font: 15px/1.45 -apple-system, "Malgun Gothic", "Apple SD Gothic Neo", sans-serif; }
+  .wrap { max-width: 980px; margin: 0 auto; padding: 16px; display: grid; grid-template-columns: 360px 1fr; gap: 16px; }
+  @media (max-width: 760px) { .wrap { grid-template-columns: 1fr; } }
+  h1 { font-size: 22px; margin: 4px 0 12px; }
+  .card { background: var(--surface); border-radius: 12px; padding: 14px; margin-bottom: 12px; }
+  .card h2 { font-size: 15px; margin: 0 0 8px; }
+  label { display: block; font-size: 13px; color: var(--label2); margin: 8px 0 4px; }
+  textarea, input[type=text], input[type=number] { width: 100%; font: 15px/1.4 ui-monospace, Consolas, monospace; padding: 8px 10px; border: 1px solid var(--sep); border-radius: 8px; background: var(--surface); color: var(--label); }
+  textarea { height: 160px; resize: vertical; text-transform: uppercase; }
+  .row { display: flex; gap: 8px; align-items: center; }
+  .row > * { flex: 1; }
+  button { font: inherit; border: 0; border-radius: 10px; padding: 10px 12px; cursor: pointer; background: rgba(118,118,128,.12); color: var(--label); }
+  button.primary { background: var(--accent); color: #fff; font-weight: 600; font-size: 17px; width: 100%; padding: 12px; }
+  button:disabled { opacity: .45; cursor: default; }
+  .note { font-size: 13px; color: var(--label2); margin: 6px 0 0; }
+  .warn { color: var(--warn); }
+  .preview { display: flex; flex-wrap: wrap; gap: 10px; align-content: flex-start; }
+  .preview .label { box-shadow: 0 0 0 1px var(--sep), 0 2px 6px rgba(0,0,0,.08); background: #fff; }
+  ol { padding-left: 18px; margin: 4px 0; font-size: 13px; color: var(--label2); }
+
+  /* 라벨 한 장 = 50 × 20mm. 인쇄할 때는 한 장이 한 쪽 */
+  .label { width: 50mm; height: 20mm; overflow: hidden; color: #000; display: flex; flex-direction: column; align-items: center; justify-content: center; }
+  .label .inner { display: flex; flex-direction: column; align-items: center; }
+  .label svg { display: block; height: 10mm; }
+  .label .txt { font: 700 13pt/1 Arial, "Malgun Gothic", sans-serif; letter-spacing: .06em; margin-top: 1.2mm; }
+  #print { display: none; }
+  @page { size: 50mm 20mm; margin: 0; }
+  @media print {
+    body { background: #fff; }
+    .wrap { display: none; }
+    #print { display: block; }
+    #print .label { page-break-after: always; break-after: page; }
+    #print .label:last-child { page-break-after: auto; break-after: auto; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div>
+    <h1>위치 라벨 출력</h1>
+    <div class="card">
+      <h2>1. 위치 입력</h2>
+      <label for="codes">위치 코드 (한 줄에 하나, 띄어쓰기·쉼표로 여러 개도 됨)</label>
+      <textarea id="codes" placeholder="A140632&#10;A140633&#10;B070112" spellcheck="false"></textarea>
+      <p class="note" id="codeNote"></p>
+      <label>범위로 만들기 (마지막 숫자 칸)</label>
+      <div class="row"><input type="text" id="rFrom" placeholder="A140601"><span style="flex:none">~</span><input type="text" id="rTo" placeholder="A140632"><button id="rAdd" style="flex:none">추가</button></div>
+      <label>부품이 있는 위치 불러오기 (앱에 로그인돼 있을 때)</label>
+      <div class="row"><input type="text" id="prefix" placeholder="앞자리 예: A1406 (비우면 전체)"><button id="load" style="flex:none">불러오기</button></div>
+      <p class="note" id="loadNote"></p>
+    </div>
+    <div class="card">
+      <h2>2. 맞춤 (처음 한 번)</h2>
+      <div class="row">
+        <div><label for="xmod">막대 굵기 (mm)</label><input type="number" id="xmod" value="0.375" step="0.125" min="0.125" max="0.5"></div>
+        <div><label for="fsize">글자 크기 (pt)</label><input type="number" id="fsize" value="13" step="1" min="8" max="20"></div>
+      </div>
+      <div class="row">
+        <div><label for="offx">가로 위치 보정 (mm)</label><input type="number" id="offx" value="0" step="0.5"></div>
+        <div><label for="offy">세로 위치 보정 (mm)</label><input type="number" id="offy" value="0" step="0.5"></div>
+      </div>
+      <p class="note">203dpi 프린터는 막대 굵기 0.375mm(3도트)나 0.25mm(2도트)처럼 0.125의 배수가 선명합니다. 긴 위치(예: 4F FLOOR)는 라벨에 맞게 자동으로 가늘게 찍힙니다. 인쇄가 한쪽으로 치우치면 위치 보정으로 맞추세요. 이 PC에 저장됩니다.</p>
+    </div>
+    <div class="card">
+      <button class="primary" id="printBtn" disabled>인쇄</button>
+      <ol>
+        <li>인쇄 창에서 <b>대상 = 라벨 프린터</b></li>
+        <li>더보기 설정: <b>용지 50 × 20mm</b>, <b>여백 없음</b>, <b>배율 100(기본)</b>, <b>머리글·바닥글 끄기</b></li>
+        <li>용지 크기가 목록에 없으면 Windows 프린터 기본 설정에서 50 × 20mm 용지를 만들어 주세요</li>
+      </ol>
+    </div>
+  </div>
+  <div>
+    <div class="card"><h2 id="pvTitle">미리보기</h2><div class="preview" id="preview"></div></div>
+  </div>
+</div>
+<div id="print"></div>
+<script>
+(function () {
+  "use strict";
+  var $ = function (id) { return document.getElementById(id); };
+  var LOC_RE = /^(?:[A-Z]\d{6}|\d+F FLOOR)$/;   // 앱·데몬과 같은 위치 형식
+  var store = { get: function (k, d) { try { var v = localStorage.getItem("labels." + k); return v == null ? d : JSON.parse(v); } catch (e) { return d; } },
+                set: function (k, v) { try { localStorage.setItem("labels." + k, JSON.stringify(v)); } catch (e) {} } };
+  ["xmod", "fsize", "offx", "offy"].forEach(function (k) { var v = store.get(k, null); if (v != null) $(k).value = v; });
+
+  function norm(s) {
+    s = String(s || "").trim().toUpperCase().replace(/\s+/g, " ");
+    var f = s.match(/^(\d+)\s*F\s*FLOOR$/);
+    return f ? f[1] + "F FLOOR" : s.replace(/\s+/g, "");
+  }
+  function parseCodes() {
+    var raw = $("codes").value.split(/[\n,;\t]+|\s{2,}/), seen = {}, ok = [], bad = [];
+    raw.forEach(function (line) {
+      var parts = /F\s*FLOOR/i.test(line) ? [line] : line.split(/\s+/);
+      parts.forEach(function (p) {
+        var c = norm(p);
+        if (!c || seen[c]) return;
+        seen[c] = 1;
+        (LOC_RE.test(c) ? ok : bad).push(c);
+      });
+    });
+    return { ok: ok, bad: bad };
+  }
+  function labelHtml(code) {
+    return '<div class="label"><div class="inner"><svg data-code="' + code + '"></svg><div class="txt">' + code + '</div></div></div>';
+  }
+  function draw(root) {
+    var x = Math.max(0.125, parseFloat($("xmod").value) || 0.375), fs = parseFloat($("fsize").value) || 13;
+    var ox = parseFloat($("offx").value) || 0, oy = parseFloat($("offy").value) || 0;
+    root.querySelectorAll(".label .inner").forEach(function (el) { el.style.transform = "translate(" + ox + "mm," + oy + "mm)"; });
+    root.querySelectorAll(".label .txt").forEach(function (el) { el.style.fontSize = fs + "pt"; });
+    var tooWide = 0;
+    root.querySelectorAll("svg[data-code]").forEach(function (svg) {
+      // 막대 1칸 = 1 단위로 그린 뒤, 단위 수 × 막대 굵기(mm)로 실제 폭을 정함 (화면·인쇄 모두 mm 그대로)
+      JsBarcode(svg, svg.getAttribute("data-code"), { format: "CODE128", width: 1, height: 40, margin: 0, displayValue: false });
+      var modules = parseFloat(svg.getAttribute("width")) || 100;
+      // 라벨 폭 50mm 에서 양옆 여백(약 3mm 이상)을 남기도록, 넘치면 그 라벨만 막대를 가늘게
+      var xe = Math.min(x, 44 / modules);
+      if (xe < 0.19) tooWide++;
+      var w = modules * xe;
+      svg.setAttribute("viewBox", "0 0 " + modules + " 40");
+      svg.setAttribute("preserveAspectRatio", "none");
+      svg.style.width = w + "mm";
+      svg.removeAttribute("width"); svg.removeAttribute("height");
+    });
+    return tooWide;
+  }
+  function render() {
+    var r = parseCodes();
+    $("codeNote").innerHTML = r.ok.length + "장" + (r.bad.length ? ' · <span class="warn">위치 형식이 아니라 뺀 것: ' + r.bad.slice(0, 8).join(", ") + (r.bad.length > 8 ? " 외 " + (r.bad.length - 8) : "") + '</span>' : "");
+    var show = r.ok.slice(0, 60);
+    $("preview").innerHTML = show.map(labelHtml).join("");
+    var wide = draw($("preview"));
+    $("pvTitle").textContent = "미리보기 (" + r.ok.length + "장" + (r.ok.length > show.length ? ", 앞 " + show.length + "장만 표시" : "") + ")" + (wide ? " · 막대 굵기를 줄이세요" : "");
+    $("printBtn").disabled = !r.ok.length;
+    return r.ok;
+  }
+  ["codes", "xmod", "fsize", "offx", "offy"].forEach(function (k) {
+    $(k).addEventListener("input", function () { if (k !== "codes") store.set(k, $(k).value); render(); });
+  });
+
+  // 범위: 앞부분이 같고 마지막 숫자 칸만 다른 두 위치 사이를 모두 만듦 (예: A140601 ~ A140632)
+  $("rAdd").addEventListener("click", function () {
+    var a = norm($("rFrom").value), b = norm($("rTo").value);
+    if (!/^[A-Z]\d{6}$/.test(a) || !/^[A-Z]\d{6}$/.test(b) || a[0] !== b[0]) { alert("A140601 ~ A140632 처럼 같은 영문자로 시작하는 위치를 넣어 주세요"); return; }
+    var x = parseInt(a.slice(1), 10), y = parseInt(b.slice(1), 10);
+    if (y < x) { var t = x; x = y; y = t; }
+    if (y - x > 500) { alert("한 번에 500장까지 만들 수 있습니다"); return; }
+    var out = [];
+    for (var n = x; n <= y; n++) out.push(a[0] + String(n).padStart(6, "0"));
+    $("codes").value = ($("codes").value.trim() ? $("codes").value.trim() + "\n" : "") + out.join("\n");
+    render();
+  });
+
+  // 부품이 있는 위치: 앱과 같은 로그인(이 PC 크롬에서 앱에 로그인돼 있어야 함)으로 현재고의 위치를 읽음
+  var sb = window.supabase.createClient("https://qswzxudtzjuheugdnuoc.supabase.co", "sb_publishable_L2_ucSAJjdWvMfvWZborbQ_1cmSAuR4",
+    { auth: { persistSession: true, autoRefreshToken: true, storageKey: "inventory-scan-auth" } });
+  $("load").addEventListener("click", async function () {
+    var btn = this, pre = norm($("prefix").value);
+    btn.disabled = true; $("loadNote").textContent = "불러오는 중…";
+    try {
+      var s = await sb.auth.getSession();
+      if (!s.data || !s.data.session) throw new Error("이 PC 크롬에서 앱에 먼저 로그인해 주세요 (같은 주소의 앱)");
+      var locs = {}, from = 0, size = 1000;
+      for (;;) {
+        var q = sb.from("inv_parts").select("lct_cd").not("lct_cd", "is", null).order("lct_cd").range(from, from + size - 1);
+        if (pre) q = q.like("lct_cd", pre + "%");
+        var r = await q;
+        if (r.error) throw r.error;
+        r.data.forEach(function (x) { var c = norm(x.lct_cd); if (LOC_RE.test(c)) locs[c] = 1; });
+        if (r.data.length < size) break;
+        from += size;
+      }
+      var list = Object.keys(locs).sort();
+      if (!list.length) { $("loadNote").textContent = "해당하는 위치가 없습니다"; return; }
+      $("codes").value = ($("codes").value.trim() ? $("codes").value.trim() + "\n" : "") + list.join("\n");
+      $("loadNote").textContent = list.length + "곳을 불러왔습니다";
+      render();
+    } catch (e) {
+      $("loadNote").innerHTML = '<span class="warn">' + (e.message || e) + '</span>';
+    } finally { btn.disabled = false; }
+  });
+
+  $("printBtn").addEventListener("click", function () {
+    var codes = render();
+    if (!codes.length) return;
+    if (codes.length > 50 && !confirm(codes.length + "장을 인쇄합니다. 계속할까요?")) return;
+    $("print").innerHTML = codes.map(labelHtml).join("");
+    draw($("print"));
+    setTimeout(function () { window.print(); }, 50);
+  });
+  render();
+})();
+</script>
+</body>
+</html>
